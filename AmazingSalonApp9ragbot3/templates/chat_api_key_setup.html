@@ -1,0 +1,84 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card bg-dark text-light">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h2>{{ 'Update' if api_key_configured else 'Setup' }} OpenAI API Key</h2>
+                    <span class="badge {{ 'bg-success' if api_key_configured else 'bg-warning' }} p-2">
+                        <i class="bi {{ 'bi-check-circle' if api_key_configured else 'bi-exclamation-circle' }} me-1"></i>
+                        {{ 'Currently Configured' if api_key_configured else 'Not Configured' }}
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        {% if api_key_configured %}
+                        <p>You already have an OpenAI API key configured. Enter a new API key below to update it.</p>
+                        {% else %}
+                        <p>To use the AI assistant, you need to provide an OpenAI API key. The key will be securely stored as an environment variable and used for all AI interactions.</p>
+                        {% endif %}
+                    </div>
+                    
+                    <form method="POST" action="{{ url_for('chat_assistant.setup_api_key') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="form-group mb-3">
+                            <label for="api_key">OpenAI API Key</label>
+                            <div class="input-group">
+                                <input type="password" class="form-control" id="api_key" name="api_key" required 
+                                       placeholder="{{ 'Enter new API key' if api_key_configured else 'Enter your API key' }}">
+                                <button type="button" class="btn btn-outline-secondary" id="togglePassword">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                            </div>
+                            <small class="form-text text-muted">
+                                If you don't have an API key, you can get one from 
+                                <a href="https://platform.openai.com/api-keys" target="_blank" class="text-info">OpenAI's website</a>.
+                            </small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <button type="submit" class="btn btn-primary">
+                                {{ 'Update' if api_key_configured else 'Save' }} API Key
+                            </button>
+                            <a href="{{ url_for('chat_assistant.index') }}" class="btn btn-secondary">Cancel</a>
+                        </div>
+                    </form>
+
+                    <div class="mt-4">
+                        <h5>Why do we need an API key?</h5>
+                        <p>The AI assistant uses OpenAI's powerful language models to provide intelligent responses. 
+                           Each API request requires authentication with your personal API key, which ensures:
+                        </p>
+                        <ul>
+                            <li>Your data and requests are securely processed</li>
+                            <li>You maintain control over the usage and billing</li>
+                            <li>You can access advanced AI capabilities tailored to your needs</li>
+                        </ul>
+                        <p>Your API key will only be used for interactions with the AI assistant in this salon management system.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const togglePasswordBtn = document.getElementById('togglePassword');
+    const passwordInput = document.getElementById('api_key');
+    
+    togglePasswordBtn.addEventListener('click', function() {
+        // Toggle the password visibility
+        if (passwordInput.type === 'password') {
+            passwordInput.type = 'text';
+            togglePasswordBtn.innerHTML = '<i class="bi bi-eye-slash"></i>';
+        } else {
+            passwordInput.type = 'password';
+            togglePasswordBtn.innerHTML = '<i class="bi bi-eye"></i>';
+        }
+    });
+});
+</script>
+{% endblock %}

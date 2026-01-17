@@ -1,0 +1,119 @@
+{% extends 'base.html' %}
+
+{% block title %}My AI Models{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="mb-4">
+        <a href="{{ url_for('skill_playground.index') }}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Skills
+        </a>
+    </div>
+    
+    <h1 class="mb-4">
+        <i class="fas fa-brain text-primary"></i> 
+        My AI Models
+    </h1>
+    
+    {% if models %}
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <div class="alert alert-info">
+                <h5 class="alert-heading"><i class="fas fa-info-circle"></i> About AI Models</h5>
+                <p>
+                    These are the AI models you've created through training sessions.
+                    Each model represents a specific capability your AI assistant has learned.
+                </p>
+                <p class="mb-0">
+                    You can use these models in client interactions, treatment planning, and other salon operations.
+                </p>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Model Stats</h5>
+                    <ul class="list-unstyled mb-0">
+                        <li><i class="fas fa-check-circle text-success"></i> Active Models: {{ models|selectattr('status', 'equalto', 'active')|list|length }}</li>
+                        <li><i class="fas fa-spinner text-warning"></i> Training Models: {{ models|selectattr('status', 'equalto', 'training')|list|length }}</li>
+                        <li><i class="fas fa-archive text-secondary"></i> Archived Models: {{ models|selectattr('status', 'equalto', 'archived')|list|length }}</li>
+                        <li><i class="fas fa-calculator text-info"></i> Total Models: {{ models|length }}</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead class="bg-light">
+                <tr>
+                    <th>Name</th>
+                    <th>Category</th>
+                    <th>Description</th>
+                    <th>Performance</th>
+                    <th>Created</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for model in models %}
+                <tr>
+                    <td>
+                        <strong>{{ model.name }}</strong><br>
+                        <small class="text-muted">ID: {{ model.model_hash[:8] }}</small>
+                    </td>
+                    <td>{{ model.category|replace('_', ' ')|title }}</td>
+                    <td>{{ model.description }}</td>
+                    <td>
+                        {% if model.performance_metrics %}
+                            {% for key, value in model.performance_metrics.items() %}
+                                <div><small>{{ key|replace('_', ' ')|title }}: <span class="fw-bold">{{ value }}</span></small></div>
+                            {% endfor %}
+                        {% else %}
+                            <span class="text-muted">No metrics available</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ model.created_at.strftime('%Y-%m-%d') }}</td>
+                    <td>
+                        {% if model.status == 'active' %}
+                            <span class="badge bg-success">Active</span>
+                        {% elif model.status == 'training' %}
+                            <span class="badge bg-warning">Training</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Archived</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="modelActions{{ model.id }}" data-bs-toggle="dropdown" aria-expanded="false">
+                                Actions
+                            </button>
+                            <ul class="dropdown-menu" aria-labelledby="modelActions{{ model.id }}">
+                                <li><a class="dropdown-item" href="#"><i class="fas fa-eye"></i> View Details</a></li>
+                                <li><a class="dropdown-item" href="#"><i class="fas fa-play"></i> Test Model</a></li>
+                                <li><a class="dropdown-item" href="#"><i class="fas fa-sync"></i> Retrain</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item text-danger" href="#"><i class="fas fa-trash"></i> Delete</a></li>
+                            </ul>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    {% else %}
+    <div class="alert alert-info">
+        <h4 class="alert-heading">No AI Models Yet</h4>
+        <p>You haven't created any AI models yet. Train your AI in different skills to generate models.</p>
+        <hr>
+        <p class="mb-0">
+            <a href="{{ url_for('skill_playground.index') }}" class="btn btn-primary">Start Training AI Skills</a>
+        </p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

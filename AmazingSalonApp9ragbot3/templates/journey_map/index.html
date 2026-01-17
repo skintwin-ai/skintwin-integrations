@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+
+{% block title %}Client Journey Maps{% endblock %}
+
+{% block styles %}
+<style>
+  .client-card {
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    cursor: pointer;
+  }
+  
+  .client-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+  }
+  
+  .client-icon {
+    font-size: 2.5rem;
+    color: #6c757d;
+    margin-bottom: 15px;
+  }
+  
+  .feature-description {
+    margin-bottom: 40px;
+    text-align: center;
+  }
+  
+  .journey-icon {
+    font-size: 3rem;
+    margin-bottom: 15px;
+    color: #4e73df;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <!-- Page Heading -->
+  <div class="d-sm-flex align-items-center justify-content-between mb-4">
+    <h1 class="h3 mb-0 text-gray-800">Client Journey Maps</h1>
+  </div>
+
+  <!-- Feature Description -->
+  <div class="row mb-4">
+    <div class="col-md-10 offset-md-1 feature-description">
+      <div class="card shadow py-4 px-4">
+        <div class="text-center">
+          <i class="fas fa-route journey-icon"></i>
+          <h4 class="mb-3">Interactive Client Journey Visualization</h4>
+          <p class="lead">
+            Visualize each client's unique journey with our salon through interactive milestone maps.
+            Track significant moments, style transformations, loyalty achievements, and personal preferences
+            to provide a more personalized experience.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Client Selection Cards -->
+  <div class="row">
+    {% for client in clients %}
+    <div class="col-xl-3 col-md-4 col-sm-6 mb-4">
+      <div class="card shadow h-100 py-2 client-card" onclick="window.location.href='{{ url_for('journey_map.view_journey_map', client_id=client.id) }}'">
+        <div class="card-body text-center">
+          <i class="fas fa-user-circle client-icon"></i>
+          <h5 class="font-weight-bold text-primary mb-1">{{ client.name }}</h5>
+          <div class="text-gray-500 mb-1">{{ client.email }}</div>
+          <div class="text-xs font-weight-bold text-gray-600 mb-1">
+            Client since {{ client.created_at.strftime('%B %Y') }}
+          </div>
+          <div class="mt-3">
+            <span class="badge badge-pill badge-{{ 'primary' if client.tier == 'Gold' else ('info' if client.tier == 'Silver' else 'secondary') }}">
+              {{ client.tier }} Member
+            </span>
+          </div>
+        </div>
+        <div class="card-footer bg-light py-2">
+          <div class="text-center">
+            <span class="text-primary">
+              <i class="fas fa-map-marked-alt mr-1"></i> View Journey Map
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% endblock %}

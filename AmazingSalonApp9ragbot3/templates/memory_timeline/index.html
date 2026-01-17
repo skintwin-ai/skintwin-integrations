@@ -1,0 +1,437 @@
+{% extends 'base.html' %}
+
+{% block title %}Client Memory Timeline{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/memory_timeline.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <h1 class="mb-4">Client Memory Timeline</h1>
+
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card shadow-sm mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Select a Client</h5>
+                    <p class="card-text text-muted mb-3">Choose a client to view their memory timeline.</p>
+                    <form action="{{ url_for('memory_timeline.view_timeline', client_id=0) }}" method="GET" id="client-form">
+                        <div class="form-group">
+                            <select class="form-control" id="client-select" required>
+                                <option value="" selected disabled>-- Select Client --</option>
+                                {% for client in clients %}
+                                <option value="{{ client.id }}">{{ client.name }} ({{ client.email }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary mt-3">View Timeline</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card shadow-sm memory-stat-card bg-gradient-primary text-white">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="me-3">
+                            <i class="fas fa-brain memory-stat-icon"></i>
+                        </div>
+                        <div>
+                            <h5 class="card-title text-white">Memory Statistics</h5>
+                            <div id="memory-stats-loading">Loading stats...</div>
+                            <div id="memory-stats-content" class="d-none">
+                                <p class="mb-1"><strong>Total Memories:</strong> <span id="total-memories">-</span></p>
+                                <p class="mb-1"><strong>Recent (7 days):</strong> <span id="recent-memories">-</span></p>
+                                <p class="mb-0"><strong>Avg. Per Client:</strong> <span id="avg-per-client">-</span></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card shadow-sm mt-3">
+                <div class="card-body">
+                    <h5 class="card-title">Memory Types</h5>
+                    <div id="memory-type-distribution" class="mt-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>Style</span>
+                            <div class="progress flex-grow-1 mx-2" style="height: 8px;">
+                                <div id="style-bar" class="progress-bar bg-primary" style="width: 0%"></div>
+                            </div>
+                            <span id="style-count">0</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>Preference</span>
+                            <div class="progress flex-grow-1 mx-2" style="height: 8px;">
+                                <div id="preference-bar" class="progress-bar bg-danger" style="width: 0%"></div>
+                            </div>
+                            <span id="preference-count">0</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>History</span>
+                            <div class="progress flex-grow-1 mx-2" style="height: 8px;">
+                                <div id="history-bar" class="progress-bar bg-success" style="width: 0%"></div>
+                            </div>
+                            <span id="history-count">0</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>Feedback</span>
+                            <div class="progress flex-grow-1 mx-2" style="height: 8px;">
+                                <div id="feedback-bar" class="progress-bar bg-warning" style="width: 0%"></div>
+                            </div>
+                            <span id="feedback-count">0</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span>Request</span>
+                            <div class="progress flex-grow-1 mx-2" style="height: 8px;">
+                                <div id="request-bar" class="progress-bar bg-info" style="width: 0%"></div>
+                            </div>
+                            <span id="request-count">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm mt-4">
+        <div class="card-header bg-light">
+            <h5 class="mb-0">Recent Memories</h5>
+        </div>
+        <div class="card-body">
+            <div id="recent-memories-list">
+                <p class="text-muted text-center py-3">Loading recent memories...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle client selection form submission
+    const clientForm = document.getElementById('client-form');
+    const clientSelect = document.getElementById('client-select');
+
+    clientForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const clientId = clientSelect.value;
+        if (clientId) {
+            window.location.href = "{{ url_for('memory_timeline.view_timeline', client_id=0) }}".replace('0', clientId);
+        }
+    });
+
+    // Load memory statistics
+    fetchMemoryStats();
+});
+
+function fetchMemoryStats() {
+    fetch("{{ url_for('memory_timeline.get_memory_stats') }}")
+        .then(response => response.json())
+        .then(data => {
+            // Update stats
+            document.getElementById('total-memories').textContent = data.total_memories;
+            document.getElementById('recent-memories').textContent = data.recent_memories;
+            document.getElementById('avg-per-client').textContent = data.avg_per_client.toFixed(1);
+
+            // Hide loading, show content
+            document.getElementById('memory-stats-loading').classList.add('d-none');
+            document.getElementById('memory-stats-content').classList.remove('d-none');
+
+            // Update type distribution
+            const typeDistribution = data.type_distribution;
+            const totalMemories = data.total_memories;
+
+            // Set default to 0 if type doesn't exist
+            const memoryTypes = ['style', 'preference', 'history', 'feedback', 'request'];
+
+            // Calculate max count for scaling
+            let maxCount = 0;
+            for (const type of memoryTypes) {
+                const count = typeDistribution[type] || 0;
+                if (count > maxCount) maxCount = count;
+            }
+
+            // Update bars
+            for (const type of memoryTypes) {
+                const count = typeDistribution[type] || 0;
+                const percentage = maxCount > 0 ? (count / maxCount * 100) : 0;
+
+                document.getElementById(`${type}-bar`).style.width = `${percentage}%`;
+                document.getElementById(`${type}-count`).textContent = count;
+            }
+
+            // Update recent memories list
+            updateRecentMemoriesList(data.recent_items);
+        })
+        .catch(error => {
+            console.error('Error fetching memory stats:', error);
+            document.getElementById('memory-stats-loading').textContent = 'Error loading stats.';
+        });
+}
+
+function updateRecentMemoriesList(items) {
+    const container = document.getElementById('recent-memories-list');
+
+    if (items.length === 0) {
+        container.innerHTML = '<p class="text-muted text-center py-3">No memories recorded yet.</p>';
+        return;
+    }
+
+    let html = '';
+
+    items.forEach(memory => {
+        const date = new Date(memory.created_at);
+        const formattedDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+
+        let iconClass = 'fas fa-sticky-note';
+        let colorClass = 'secondary';
+
+        switch(memory.type) {
+            case 'style':
+                iconClass = 'fas fa-cut';
+                colorClass = 'primary';
+                break;
+            case 'preference':
+                iconClass = 'fas fa-heart';
+                colorClass = 'danger';
+                break;
+            case 'history':
+                iconClass = 'fas fa-history';
+                colorClass = 'success';
+                break;
+            case 'feedback':
+                iconClass = 'fas fa-comment';
+                colorClass = 'warning';
+                break;
+            case 'request':
+                iconClass = 'fas fa-ticket-alt';
+                colorClass = 'info';
+                break;
+        }
+
+        html += `
+        <div class="d-flex mb-3 pb-3 border-bottom">
+            <div class="me-3">
+                <div class="rounded-circle bg-light d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
+                    <i class="${iconClass} text-${colorClass}"></i>
+                </div>
+            </div>
+            <div class="flex-grow-1">
+                <div class="d-flex justify-content-between align-items-start">
+                    <h6 class="mb-0">
+                        <a href="{{ url_for('memory_timeline.view_timeline', client_id=0) }}".replace('0', ${memory.client_id})>
+                            ${memory.client_name}
+                        </a>
+                    </h6>
+                    <small class="text-muted">${formattedDate}</small>
+                </div>
+                <div class="mt-1">
+                    <span class="badge bg-${colorClass} me-2 text-capitalize">${memory.type}</span>
+                    <span>${memory.content}</span>
+                </div>
+            </div>
+        </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+</script>
+{% endblock %}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-md-8">
+            <h3>Treatment Memory Timeline</h3>
+            <div class="mb-4">
+                <form id="memoryForm" class="card p-3">
+                    <div class="mb-3">
+                        <label for="memoryContent" class="form-label">New Memory</label>
+                        <textarea class="form-control" id="memoryContent" rows="3" required></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="memoryType" class="form-label">Type</label>
+                        <select class="form-select" id="memoryType">
+                            <option value="note">Note</option>
+                            <option value="preference">Preference</option>
+                            <option value="style">Style</option>
+                            <option value="history">History</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Add Memory</button>
+                </form>
+            </div>
+            <div class="memory-stream">
+                {% for memory in memories %}
+                <div class="memory-card">
+                    <div class="memory-date">{{ memory.created_at.strftime('%Y-%m-%d') }}</div>
+                    <div class="memory-content">
+                        <h5>{{ memory.title }}</h5>
+                        <p>{{ memory.content }}</p>
+                        <span class="badge bg-primary">{{ memory.type }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card insights-panel">
+                <div class="card-header">
+                    <h4>Client Insights</h4>
+                </div>
+                <div class="card-body">
+                    <div id="insightsChart"></div>
+                    <div id="keyPatterns" class="mt-3">
+                        <h5>Key Patterns</h5>
+                        <ul class="list-group" id="patternsList">
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+// Initialize insights visualization
+function initializeInsights(memories) {
+    // Create memory type distribution chart
+    const typeData = {};
+    memories.forEach(memory => {
+        typeData[memory.type] = (typeData[memory.type] || 0) + 1;
+    });
+
+    new Chart(document.getElementById('insightsChart'), {
+        type: 'doughnut',
+        data: {
+            labels: Object.keys(typeData),
+            datasets: [{
+                data: Object.values(typeData),
+                backgroundColor: [
+                    '#FF6384',
+                    '#36A2EB',
+                    '#FFCE56',
+                    '#4BC0C0',
+                    '#9966FF'
+                ]
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                },
+                title: {
+                    display: true,
+                    text: 'Memory Distribution'
+                }
+            }
+        }
+    });
+
+    // Analyze patterns
+    const patterns = analyzePatterns(memories);
+    const patternsList = document.getElementById('patternsList');
+    patterns.forEach(pattern => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item';
+        li.innerHTML = `<i class="fas fa-lightbulb text-warning"></i> ${pattern}`;
+        patternsList.appendChild(li);
+    });
+}
+
+function analyzePatterns(memories) {
+    const patterns = [];
+
+    // Sort by date
+    memories.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+    // Find frequent preferences
+    const preferences = memories.filter(m => m.type === 'preference');
+    if (preferences.length > 0) {
+        patterns.push('Client has expressed ' + preferences.length + ' style preferences');
+    }
+
+    // Check feedback consistency
+    const feedback = memories.filter(m => m.type === 'feedback');
+    if (feedback.length > 0) {
+        patterns.push('Client has provided feedback ' + feedback.length + ' times');
+    }
+
+    // Look for special occasions
+    const occasions = memories.filter(m => m.content.toLowerCase().includes('special occasion'));
+    if (occasions.length > 0) {
+        patterns.push('Client has ' + occasions.length + ' special occasion records');
+    }
+
+    return patterns;
+}
+
+document.getElementById('memoryForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const content = document.getElementById('memoryContent').value;
+    const type = document.getElementById('memoryType').value;
+    const clientId = document.getElementById('client-select').value; // Added to get client ID
+
+    try {
+        const response = await fetch(`/api/memories/${clientId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ content, type })
+        });
+
+        const result = await response.json();
+        if (result.memories) {
+            // Add the new memory to the timeline
+            const memoryCard = document.createElement('div');
+            memoryCard.className = 'memory-card';
+            memoryCard.innerHTML = `
+                <div class="memory-date">${new Date().toLocaleDateString()}</div>
+                <div class="memory-content">
+                    <h5>${type.charAt(0).toUpperCase() + type.slice(1)}</h5>
+                    <p>${content}</p>
+                    <div class="insights">
+                        <small class="text-muted">AI Insights: ${result.insights}</small>
+                    </div>
+                </div>
+            `;
+            document.querySelector('.memory-stream').prepend(memoryCard);
+            // Re-initialize insights after adding new memory
+            initializeInsights(result.memories);
+        }
+
+        // Clear the form
+        document.getElementById('memoryContent').value = '';
+    } catch (error) {
+        console.error('Error:', error);
+    }
+});
+
+// Update the existing loadMemories function
+const existingLoadMemories = loadMemories;
+function loadMemories(clientId) {
+    fetch(`/api/memories/${clientId}`)
+        .then(response => response.json())
+        .then(data => {
+            // Existing timeline rendering
+            renderTimeline(data.memories);
+
+            // Initialize insights
+            initializeInsights(data.memories);
+        });
+}
+
+</script>

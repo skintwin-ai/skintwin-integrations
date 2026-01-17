@@ -1,0 +1,219 @@
+{% extends 'base.html' %}
+
+{% block title %}Train {{ skill.name }} - AI Skill Training{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="mb-4">
+        <a href="{{ url_for('skill_playground.view_skill', skill_id=skill.id) }}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Skill
+        </a>
+    </div>
+    
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h3 class="mb-0">
+                <i class="fas fa-graduation-cap"></i> 
+                Train: {{ skill.name }}
+            </h3>
+        </div>
+        <div class="card-body">
+            <h5 class="card-subtitle mb-3 text-muted">Category: {{ skill.category|replace('_', ' ')|title }}</h5>
+            
+            <div class="alert alert-info">
+                <h5><i class="fas fa-info-circle"></i> Training Instructions</h5>
+                <p>
+                    You are about to train your AI assistant in the <strong>{{ skill.name }}</strong> skill.
+                    Training will involve providing sample datasets and parameters for the learning algorithm.
+                </p>
+                <p class="mb-0">
+                    <strong>Prerequisites:</strong> {{ skill.prerequisites }}
+                </p>
+            </div>
+            
+            <div class="row mt-4">
+                <div class="col-md-8">
+                    <form method="POST" action="{{ url_for('skill_playground.train_skill', skill_id=skill.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <h5 class="mb-3">Training Parameters</h5>
+                        
+                        {% if skill.category == 'skin_analysis' %}
+                        <div class="mb-3">
+                            <label for="dataset_size" class="form-label">Dataset Size</label>
+                            <select class="form-select" id="dataset_size" name="dataset_size">
+                                <option value="small">Small (faster training, less accurate)</option>
+                                <option value="medium" selected>Medium (balanced)</option>
+                                <option value="large">Large (slower training, more accurate)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="model_complexity" class="form-label">Model Complexity</label>
+                            <select class="form-select" id="model_complexity" name="model_complexity">
+                                <option value="simple">Simple (faster inference, less capable)</option>
+                                <option value="balanced" selected>Balanced</option>
+                                <option value="complex">Complex (slower inference, more capable)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Skin Conditions to Analyze</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="acne" id="condition_acne" name="conditions" checked>
+                                <label class="form-check-label" for="condition_acne">Acne</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="rosacea" id="condition_rosacea" name="conditions" checked>
+                                <label class="form-check-label" for="condition_rosacea">Rosacea</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="hyperpigmentation" id="condition_hyperpigmentation" name="conditions" checked>
+                                <label class="form-check-label" for="condition_hyperpigmentation">Hyperpigmentation</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="dehydration" id="condition_dehydration" name="conditions" checked>
+                                <label class="form-check-label" for="condition_dehydration">Dehydration</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="sensitivity" id="condition_sensitivity" name="conditions" checked>
+                                <label class="form-check-label" for="condition_sensitivity">Sensitivity</label>
+                            </div>
+                        </div>
+                        
+                        {% elif skill.category == 'treatment_optimization' %}
+                        <div class="mb-3">
+                            <label for="sensitivity_weight" class="form-label">Client Sensitivity Weight</label>
+                            <input type="range" class="form-range" min="1" max="10" value="5" id="sensitivity_weight" name="sensitivity_weight">
+                            <div class="d-flex justify-content-between">
+                                <small>Prioritize effectiveness</small>
+                                <small>Balanced</small>
+                                <small>Prioritize gentleness</small>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="treatment_goal" class="form-label">Treatment Goal</label>
+                            <select class="form-select" id="treatment_goal" name="treatment_goal">
+                                <option value="anti_aging">Anti-Aging</option>
+                                <option value="acne" selected>Acne Management</option>
+                                <option value="brightening">Brightening</option>
+                                <option value="hydration">Hydration</option>
+                                <option value="calming">Calming/Soothing</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="optimization_iterations" class="form-label">Optimization Iterations</label>
+                            <select class="form-select" id="optimization_iterations" name="optimization_iterations">
+                                <option value="100">Quick (100 iterations)</option>
+                                <option value="500" selected>Standard (500 iterations)</option>
+                                <option value="1000">Thorough (1000 iterations)</option>
+                            </select>
+                        </div>
+                        
+                        {% elif skill.category == 'ingredient_analysis' %}
+                        <div class="mb-3">
+                            <label for="ingredient_categories" class="form-label">Ingredient Categories</label>
+                            <select class="form-select" id="ingredient_categories" name="ingredient_categories" multiple size="5">
+                                <option value="humectants" selected>Humectants</option>
+                                <option value="exfoliants" selected>Exfoliants</option>
+                                <option value="antioxidants" selected>Antioxidants</option>
+                                <option value="emollients" selected>Emollients</option>
+                                <option value="occlusives">Occlusives</option>
+                                <option value="botanical_extracts">Botanical Extracts</option>
+                                <option value="peptides">Peptides</option>
+                                <option value="vitamins">Vitamins</option>
+                            </select>
+                            <div class="form-text">Hold Ctrl/Cmd to select multiple categories</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="skin_type_focus" class="form-label">Skin Type Focus</label>
+                            <select class="form-select" id="skin_type_focus" name="skin_type_focus">
+                                <option value="all">All Skin Types</option>
+                                <option value="dry" selected>Dry Skin</option>
+                                <option value="oily">Oily Skin</option>
+                                <option value="combination">Combination Skin</option>
+                                <option value="sensitive">Sensitive Skin</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="analysis_depth" class="form-label">Analysis Depth</label>
+                            <select class="form-select" id="analysis_depth" name="analysis_depth">
+                                <option value="basic">Basic (ingredient-to-ingredient)</option>
+                                <option value="medium" selected>Medium (includes formulation factors)</option>
+                                <option value="advanced">Advanced (includes skin biochemistry)</option>
+                            </select>
+                        </div>
+                        {% endif %}
+                        
+                        <div class="mb-3">
+                            <label for="training_notes" class="form-label">Training Notes (Optional)</label>
+                            <textarea class="form-control" id="training_notes" name="training_notes" rows="3" placeholder="Add any notes about this training session..."></textarea>
+                        </div>
+                        
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" value="true" id="save_model" name="save_model" checked>
+                            <label class="form-check-label" for="save_model">
+                                Save model after training
+                            </label>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between mt-4">
+                            <button type="button" class="btn btn-outline-secondary" onclick="window.history.back()">Cancel</button>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-play"></i> Start Training
+                            </button>
+                        </div>
+                    </form>
+                </div>
+                
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header bg-light">
+                            <h5 class="card-title mb-0">Training Tips</h5>
+                        </div>
+                        <div class="card-body">
+                            <ul class="list-group list-group-flush">
+                                <li class="list-group-item">
+                                    <i class="fas fa-lightbulb text-warning"></i> 
+                                    Start with a smaller dataset for faster iterations
+                                </li>
+                                <li class="list-group-item">
+                                    <i class="fas fa-lightbulb text-warning"></i> 
+                                    Balance model complexity with your hardware capabilities
+                                </li>
+                                <li class="list-group-item">
+                                    <i class="fas fa-lightbulb text-warning"></i> 
+                                    Focus on specific skin conditions for better results
+                                </li>
+                                <li class="list-group-item">
+                                    <i class="fas fa-lightbulb text-warning"></i> 
+                                    Save your model to build upon it in future training sessions
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <div class="card mt-3">
+                        <div class="card-header bg-light">
+                            <h5 class="card-title mb-0">Training Process</h5>
+                        </div>
+                        <div class="card-body">
+                            <ol class="mb-0">
+                                <li>Configure parameters</li>
+                                <li>Data preprocessing</li>
+                                <li>Model initialization</li>
+                                <li>Training iterations</li>
+                                <li>Performance evaluation</li>
+                                <li>Model deployment</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

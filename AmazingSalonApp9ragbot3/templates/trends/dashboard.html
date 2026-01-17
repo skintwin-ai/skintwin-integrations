@@ -1,0 +1,1263 @@
+{% extends "base.html" %}
+
+{% block title %}Service Trend Predictions{% endblock %}
+
+{% block styles %}
+<style>
+    .trend-card {
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        margin-bottom: 20px;
+        overflow: hidden;
+    }
+    
+    .trend-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+    }
+    
+    .trend-up {
+        color: #28a745;
+    }
+    
+    .trend-down {
+        color: #dc3545;
+    }
+    
+    .trend-stable {
+        color: #6c757d;
+    }
+    
+    .confidence-indicator {
+        width: 100%;
+        height: 6px;
+        background-color: #e9ecef;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-top: 5px;
+    }
+    
+    .confidence-bar {
+        height: 100%;
+        border-radius: 3px;
+    }
+    
+    .priority-high {
+        border-left: 4px solid #dc3545;
+    }
+    
+    .priority-medium {
+        border-left: 4px solid #fd7e14;
+    }
+    
+    .priority-low {
+        border-left: 4px solid #6c757d;
+    }
+    
+    .sparkline-container {
+        height: 30px;
+        width: 100%;
+        margin-bottom: 10px;
+    }
+    
+    .time-distribution {
+        height: 200px;
+    }
+    
+    .chart-container {
+        position: relative;
+        height: 300px;
+        margin-bottom: 30px;
+    }
+    
+    .prediction-details {
+        font-size: 0.9rem;
+        color: #6c757d;
+    }
+    
+    .recommendation-card {
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 15px;
+        background-color: #f8f9fa;
+        border-left: 4px solid #6c757d;
+    }
+    
+    .service-legend {
+        display: flex;
+        flex-wrap: wrap;
+        margin-bottom: 20px;
+    }
+    
+    .service-legend-item {
+        display: flex;
+        align-items: center;
+        margin-right: 15px;
+        margin-bottom: 5px;
+    }
+    
+    .service-color {
+        width: 15px;
+        height: 15px;
+        border-radius: 3px;
+        margin-right: 5px;
+    }
+    
+    .recommendation-counter {
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        background-color: #dc3545;
+        color: #fff;
+        border-radius: 50%;
+        width: 25px;
+        height: 25px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.8rem;
+        font-weight: bold;
+    }
+    
+    .ai-badge {
+        background-color: #6f42c1;
+        color: white;
+        font-size: 0.7rem;
+        padding: 3px 8px;
+        border-radius: 10px;
+        display: inline-block;
+        margin-left: 5px;
+    }
+    
+    #timeFilter, #confidenceFilter {
+        width: 100%;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4">
+    <h1 class="mt-4">AI Service Trend Predictions <span class="ai-badge">AI Powered</span></h1>
+    <ol class="breadcrumb mb-4">
+        <li class="breadcrumb-item"><a href="{{ url_for('index') }}">Dashboard</a></li>
+        <li class="breadcrumb-item active">Service Trends</li>
+    </ol>
+    
+    <div class="row mb-4">
+        <div class="col-xl-3 col-md-6">
+            <div class="card bg-primary text-white mb-4">
+                <div class="card-body">
+                    <h5>Service Trend Analysis</h5>
+                    <p class="mb-0">AI-powered growth predictions based on historical data</p>
+                </div>
+                <div class="card-footer d-flex align-items-center justify-content-between">
+                    <a class="small text-white stretched-link" href="#service-trends">View Details</a>
+                    <div class="small text-white"><i class="fas fa-angle-right"></i></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-3 col-md-6">
+            <div class="card bg-success text-white mb-4">
+                <div class="card-body">
+                    <h5>Peak Time Analysis</h5>
+                    <p class="mb-0">Identify your busiest times for optimal scheduling</p>
+                </div>
+                <div class="card-footer d-flex align-items-center justify-content-between">
+                    <a class="small text-white stretched-link" href="#peak-times">View Details</a>
+                    <div class="small text-white"><i class="fas fa-angle-right"></i></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-3 col-md-6">
+            <div class="card bg-warning text-white mb-4">
+                <div class="card-body position-relative">
+                    <h5>Business Recommendations</h5>
+                    <p class="mb-0">AI-driven insights to grow your salon business</p>
+                    <div class="recommendation-counter" id="recommendationCounter">0</div>
+                </div>
+                <div class="card-footer d-flex align-items-center justify-content-between">
+                    <a class="small text-white stretched-link" href="#recommendations">View Details</a>
+                    <div class="small text-white"><i class="fas fa-angle-right"></i></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-3 col-md-6">
+            <div class="card bg-info text-white mb-4">
+                <div class="card-body">
+                    <h5>Service Revenue Forecast</h5>
+                    <p class="mb-0">Projected revenue based on service trends</p>
+                </div>
+                <div class="card-footer d-flex align-items-center justify-content-between">
+                    <a class="small text-white stretched-link" href="#revenue-forecast">View Details</a>
+                    <div class="small text-white"><i class="fas fa-angle-right"></i></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mb-4">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="fas fa-chart-line me-1"></i>
+                        Service Popularity Trends
+                    </div>
+                    <div class="d-flex">
+                        <select id="timeFilter" class="form-select form-select-sm me-2">
+                            <option value="month">Monthly</option>
+                            <option value="week">Weekly</option>
+                            <option value="quarter">Quarterly</option>
+                        </select>
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshData">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="service-legend" id="serviceLegend">
+                        <!-- Service legend items will be generated here -->
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="servicePopularityChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-filter me-1"></i>
+                    Filter by Confidence Level
+                </div>
+                <div class="card-body">
+                    <p class="mb-2">Show predictions with confidence level:</p>
+                    <input type="range" class="form-range" min="0" max="100" value="50" id="confidenceFilter">
+                    <div class="d-flex justify-content-between mt-1">
+                        <small>Low confidence</small>
+                        <small id="confidenceValue">50%</small>
+                        <small>High confidence</small>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <div class="alert alert-info">
+                        <h5><i class="fas fa-info-circle me-2"></i>About Predictions</h5>
+                        <p class="mb-0">Our AI analyzes your historical appointment and transaction data to predict future trends. Higher confidence scores indicate more reliable predictions.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mb-4" id="service-trends">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-chart-pie me-1"></i>
+                    Service Trend Breakdown
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-bordered" id="serviceTrendTable">
+                            <thead>
+                                <tr>
+                                    <th>Service Name</th>
+                                    <th>Category</th>
+                                    <th>Current Usage</th>
+                                    <th>Predicted Next</th>
+                                    <th>Trend</th>
+                                    <th>Growth Rate</th>
+                                    <th>Confidence</th>
+                                    <th>Historical Trend</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Service trend data will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mb-4" id="peak-times">
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="fas fa-clock me-1"></i>
+                        Peak Time Analysis
+                    </div>
+                    <select id="granularityFilter" class="form-select form-select-sm" style="width: auto;">
+                        <option value="day_of_week">Day of Week</option>
+                        <option value="hour">Hour of Day</option>
+                        <option value="day">Day of Month</option>
+                    </select>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="peakTimesChart"></canvas>
+                    </div>
+                    <div class="alert alert-success mt-3">
+                        <h5><i class="fas fa-lightbulb me-2"></i>Peak Time Insight</h5>
+                        <p id="peakTimeInsight">Analyzing your booking patterns...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-map me-1"></i>
+                    Time Distribution Analysis
+                </div>
+                <div class="card-body">
+                    <div class="time-distribution">
+                        <canvas id="timeDistributionChart"></canvas>
+                    </div>
+                    <div class="row mt-4">
+                        <div class="col-md-6">
+                            <h5>Peak Demand Times</h5>
+                            <ul class="list-group" id="peakDemandList">
+                                <!-- Peak demand times will be listed here -->
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h5>Low Demand Times</h5>
+                            <ul class="list-group" id="lowDemandList">
+                                <!-- Low demand times will be listed here -->
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mb-4" id="recommendations">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-lightbulb me-1"></i>
+                    AI-Powered Business Recommendations
+                </div>
+                <div class="card-body">
+                    <div id="recommendationsContainer">
+                        <!-- Recommendations will be populated here -->
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-3">Analyzing your business data to generate recommendations...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mb-4" id="revenue-forecast">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-dollar-sign me-1"></i>
+                    Service Revenue Forecast
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="revenueChart"></canvas>
+                    </div>
+                    <div class="table-responsive mt-4">
+                        <table class="table table-sm table-bordered" id="revenueForecastTable">
+                            <thead>
+                                <tr>
+                                    <th>Service</th>
+                                    <th>Current Revenue</th>
+                                    <th>Predicted Revenue</th>
+                                    <th>Change</th>
+                                    <th>Growth</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Revenue forecast data will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Charts
+    let servicePopularityChart;
+    let peakTimesChart;
+    let timeDistributionChart;
+    let revenueChart;
+    
+    // Data
+    let serviceData = {};
+    let peakTimesData = {};
+    let recommendationsData = [];
+    
+    // Initial load
+    loadServiceTrendData();
+    loadPeakTimesData();
+    loadRecommendationsData();
+    
+    // Event listeners
+    document.getElementById('timeFilter').addEventListener('change', loadServiceTrendData);
+    document.getElementById('granularityFilter').addEventListener('change', loadPeakTimesData);
+    document.getElementById('refreshData').addEventListener('click', refreshAllData);
+    document.getElementById('confidenceFilter').addEventListener('input', updateConfidenceFilter);
+    
+    function updateConfidenceFilter() {
+        const value = document.getElementById('confidenceFilter').value;
+        document.getElementById('confidenceValue').textContent = `${value}%`;
+        
+        // Filter the service trend table
+        const rows = document.querySelectorAll('#serviceTrendTable tbody tr');
+        rows.forEach(row => {
+            const confidenceCell = row.querySelector('td:nth-child(7)');
+            if (confidenceCell) {
+                const confidenceValue = parseFloat(confidenceCell.getAttribute('data-confidence') || '0') * 100;
+                if (confidenceValue < value) {
+                    row.style.display = 'none';
+                } else {
+                    row.style.display = '';
+                }
+            }
+        });
+    }
+    
+    function refreshAllData() {
+        loadServiceTrendData();
+        loadPeakTimesData();
+        loadRecommendationsData();
+    }
+    
+    function loadServiceTrendData() {
+        const timeFilter = document.getElementById('timeFilter').value;
+        
+        // Show loading state
+        document.querySelector('#serviceTrendTable tbody').innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center py-3">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <span class="ms-2">Analyzing service trends...</span>
+                </td>
+            </tr>
+        `;
+        
+        fetch(`/trends/service_popularity?time_period=${timeFilter}`)
+            .then(response => response.json())
+            .then(data => {
+                serviceData = data;
+                
+                // Render service trend table
+                renderServiceTrendTable(data);
+                
+                // Render service popularity chart
+                renderServicePopularityChart(data);
+                
+                // Render revenue forecast
+                renderRevenueChart(data);
+                
+                // Update the confidence filter
+                updateConfidenceFilter();
+            })
+            .catch(error => {
+                console.error('Error fetching service trend data:', error);
+                document.querySelector('#serviceTrendTable tbody').innerHTML = `
+                    <tr>
+                        <td colspan="8" class="text-center py-3 text-danger">
+                            <i class="fas fa-exclamation-circle me-2"></i>
+                            Error loading trend data. Please try again.
+                        </td>
+                    </tr>
+                `;
+            });
+    }
+    
+    function loadPeakTimesData() {
+        const granularity = document.getElementById('granularityFilter').value;
+        
+        // Show loading state
+        document.querySelector('#peakDemandList').innerHTML = `
+            <li class="list-group-item text-center">
+                <div class="spinner-border spinner-border-sm text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <span class="ms-2">Analyzing peak times...</span>
+            </li>
+        `;
+        
+        fetch(`/trends/peak_times?granularity=${granularity}`)
+            .then(response => response.json())
+            .then(data => {
+                peakTimesData = data;
+                
+                // Render peak times chart
+                renderPeakTimesChart(data);
+                
+                // Render time distribution chart
+                renderTimeDistributionChart(data);
+                
+                // Render peak and low demand lists
+                renderDemandLists(data);
+                
+                // Update peak time insight
+                updatePeakTimeInsight(data);
+            })
+            .catch(error => {
+                console.error('Error fetching peak times data:', error);
+                document.querySelector('#peakDemandList').innerHTML = `
+                    <li class="list-group-item text-center text-danger">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        Error loading peak times data.
+                    </li>
+                `;
+            });
+    }
+    
+    function loadRecommendationsData() {
+        const timeFilter = document.getElementById('timeFilter').value;
+        const granularity = document.getElementById('granularityFilter').value;
+        
+        // Show loading state
+        document.getElementById('recommendationsContainer').innerHTML = `
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-3">Analyzing your business data to generate recommendations...</p>
+            </div>
+        `;
+        
+        fetch(`/trends/recommendations?time_period=${timeFilter}&granularity=${granularity}`)
+            .then(response => response.json())
+            .then(data => {
+                recommendationsData = data;
+                
+                // Render recommendations
+                renderRecommendations(data);
+                
+                // Update recommendation counter
+                document.getElementById('recommendationCounter').textContent = data.length;
+            })
+            .catch(error => {
+                console.error('Error fetching recommendations data:', error);
+                document.getElementById('recommendationsContainer').innerHTML = `
+                    <div class="text-center py-5 text-danger">
+                        <i class="fas fa-exclamation-circle fa-3x mb-3"></i>
+                        <p>Error loading recommendations. Please try again.</p>
+                    </div>
+                `;
+            });
+    }
+    
+    function renderServiceTrendTable(data) {
+        const tableBody = document.querySelector('#serviceTrendTable tbody');
+        tableBody.innerHTML = '';
+        
+        // Get services and sort by trend direction (up first, then stable, then down)
+        const serviceIds = Object.keys(data);
+        serviceIds.sort((a, b) => {
+            const directionOrder = { 'up': 0, 'stable': 1, 'down': 2 };
+            return directionOrder[data[a].trend_direction] - directionOrder[data[b].trend_direction];
+        });
+        
+        serviceIds.forEach(serviceId => {
+            const service = data[serviceId];
+            
+            const row = document.createElement('tr');
+            
+            // Service name
+            const nameCell = document.createElement('td');
+            nameCell.textContent = service.service_name;
+            row.appendChild(nameCell);
+            
+            // Category
+            const categoryCell = document.createElement('td');
+            categoryCell.textContent = service.service_category;
+            row.appendChild(categoryCell);
+            
+            // Current usage
+            const currentCell = document.createElement('td');
+            currentCell.textContent = service.current_usage;
+            row.appendChild(currentCell);
+            
+            // Predicted next
+            const predictedCell = document.createElement('td');
+            predictedCell.textContent = service.predicted_next;
+            row.appendChild(predictedCell);
+            
+            // Trend direction
+            const trendCell = document.createElement('td');
+            let trendIcon;
+            if (service.trend_direction === 'up') {
+                trendIcon = '<i class="fas fa-arrow-up me-1 trend-up"></i>';
+                trendCell.classList.add('trend-up');
+            } else if (service.trend_direction === 'down') {
+                trendIcon = '<i class="fas fa-arrow-down me-1 trend-down"></i>';
+                trendCell.classList.add('trend-down');
+            } else {
+                trendIcon = '<i class="fas fa-arrows-alt-h me-1 trend-stable"></i>';
+                trendCell.classList.add('trend-stable');
+            }
+            trendCell.innerHTML = trendIcon + service.trend_direction.charAt(0).toUpperCase() + service.trend_direction.slice(1);
+            row.appendChild(trendCell);
+            
+            // Growth rate
+            const growthCell = document.createElement('td');
+            const growthRate = (service.growth_rate * 100).toFixed(1);
+            growthCell.textContent = `${growthRate}%`;
+            if (parseFloat(growthRate) > 0) {
+                growthCell.classList.add('trend-up');
+            } else if (parseFloat(growthRate) < 0) {
+                growthCell.classList.add('trend-down');
+            }
+            row.appendChild(growthCell);
+            
+            // Confidence
+            const confidenceCell = document.createElement('td');
+            confidenceCell.setAttribute('data-confidence', service.confidence);
+            
+            const confidencePercentage = (service.confidence * 100).toFixed(0);
+            confidenceCell.innerHTML = `
+                ${confidencePercentage}%
+                <div class="confidence-indicator">
+                    <div class="confidence-bar bg-${getConfidenceColor(service.confidence)}" 
+                         style="width: ${confidencePercentage}%"></div>
+                </div>
+            `;
+            row.appendChild(confidenceCell);
+            
+            // Historical trend sparkline
+            const historyCell = document.createElement('td');
+            historyCell.innerHTML = `<div class="sparkline-container" id="sparkline-${serviceId}"></div>`;
+            row.appendChild(historyCell);
+            
+            tableBody.appendChild(row);
+        });
+        
+        // Add sparklines after DOM elements are created
+        serviceIds.forEach(serviceId => {
+            const service = data[serviceId];
+            if (service.historical_data && service.historical_data.length > 0) {
+                renderSparkline(serviceId, service.historical_data);
+            }
+        });
+    }
+    
+    function renderServicePopularityChart(data) {
+        const ctx = document.getElementById('servicePopularityChart').getContext('2d');
+        
+        // Destroy existing chart if it exists
+        if (servicePopularityChart) {
+            servicePopularityChart.destroy();
+        }
+        
+        // Get top 6 services by current usage
+        const topServices = Object.keys(data)
+            .sort((a, b) => data[b].current_usage - data[a].current_usage)
+            .slice(0, 6);
+            
+        // Prepare data for chart
+        const labels = ['Current', 'Predicted'];
+        const datasets = topServices.map((serviceId, index) => {
+            const service = data[serviceId];
+            const color = getChartColor(index);
+            
+            return {
+                label: service.service_name,
+                data: [service.current_usage, service.predicted_next],
+                backgroundColor: color,
+                borderColor: color,
+                borderWidth: 1
+            };
+        });
+        
+        // Create the chart
+        servicePopularityChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Number of Bookings'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: function(context) {
+                                const serviceId = topServices[context.datasetIndex];
+                                const service = data[serviceId];
+                                const direction = service.trend_direction;
+                                const growth = (service.growth_rate * 100).toFixed(1);
+                                return `Trend: ${direction} (${growth}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Update service legend
+        const legendContainer = document.getElementById('serviceLegend');
+        legendContainer.innerHTML = '';
+        
+        topServices.forEach((serviceId, index) => {
+            const service = data[serviceId];
+            const color = getChartColor(index);
+            
+            const legendItem = document.createElement('div');
+            legendItem.className = 'service-legend-item';
+            legendItem.innerHTML = `
+                <div class="service-color" style="background-color: ${color}"></div>
+                <div>${service.service_name}</div>
+            `;
+            
+            legendContainer.appendChild(legendItem);
+        });
+    }
+    
+    function renderPeakTimesChart(data) {
+        const ctx = document.getElementById('peakTimesChart').getContext('2d');
+        
+        // Destroy existing chart if it exists
+        if (peakTimesChart) {
+            peakTimesChart.destroy();
+        }
+        
+        // Get distribution data
+        const distribution = data.distribution || {};
+        
+        // Prepare labels and data
+        const granularity = document.getElementById('granularityFilter').value;
+        let labels = [];
+        
+        if (granularity === 'day_of_week') {
+            labels = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        } else if (granularity === 'hour') {
+            labels = Array.from({length: 24}, (_, i) => `${i}:00`);
+        } else if (granularity === 'day') {
+            labels = Array.from({length: 31}, (_, i) => `Day ${i+1}`);
+        }
+        
+        const chartData = labels.map((label, index) => distribution[index] || 0);
+        
+        // Define peak time background colors
+        const backgroundColors = chartData.map((value, index) => {
+            const peakTimes = (data.peak_times || []).map(pt => pt.time);
+            const lowTimes = (data.low_demand_times || []).map(lt => lt.time);
+            
+            if (peakTimes.includes(index)) {
+                return 'rgba(40, 167, 69, 0.8)';  // Peak times in green
+            } else if (lowTimes.includes(index)) {
+                return 'rgba(108, 117, 125, 0.4)';  // Low times in gray
+            } else {
+                return 'rgba(0, 123, 255, 0.6)';  // Normal times in blue
+            }
+        });
+        
+        // Create the chart
+        peakTimesChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Booking Count',
+                    data: chartData,
+                    backgroundColor: backgroundColors,
+                    borderColor: backgroundColors.map(color => color.replace('0.6', '1').replace('0.8', '1').replace('0.4', '0.7')),
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Number of Bookings'
+                        }
+                    }
+                },
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: function(context) {
+                                const index = context.dataIndex;
+                                const peakTimes = (data.peak_times || []).map(pt => pt.time);
+                                const lowTimes = (data.low_demand_times || []).map(lt => lt.time);
+                                
+                                if (peakTimes.includes(index)) {
+                                    return 'Peak demand time';
+                                } else if (lowTimes.includes(index)) {
+                                    return 'Low demand time';
+                                } else {
+                                    return 'Normal demand';
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    function renderTimeDistributionChart(data) {
+        const ctx = document.getElementById('timeDistributionChart').getContext('2d');
+        
+        // Destroy existing chart if it exists
+        if (timeDistributionChart) {
+            timeDistributionChart.destroy();
+        }
+        
+        // Get distribution data
+        const distribution = data.distribution || {};
+        
+        // Prepare data for pie chart
+        const keys = Object.keys(distribution);
+        const values = keys.map(key => distribution[key]);
+        
+        // Get labels based on granularity
+        const granularity = document.getElementById('granularityFilter').value;
+        const labels = keys.map(key => {
+            if (granularity === 'day_of_week') {
+                const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+                return days[parseInt(key)];
+            } else if (granularity === 'hour') {
+                return `${key}:00`;
+            } else if (granularity === 'day') {
+                return `Day ${key}`;
+            }
+            return key;
+        });
+        
+        // Generate colors
+        const backgroundColors = keys.map((_, index) => {
+            const hue = (index * 137.5) % 360;  // Use golden angle for even distribution
+            return `hsla(${hue}, 70%, 60%, 0.7)`;
+        });
+        
+        // Create the chart
+        timeDistributionChart = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: values,
+                    backgroundColor: backgroundColors,
+                    borderColor: backgroundColors.map(color => color.replace('0.7', '1')),
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: {
+                            boxWidth: 12,
+                            font: {
+                                size: 10
+                            }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: function(context) {
+                                const percentage = (context.raw / values.reduce((a, b) => a + b, 0) * 100).toFixed(1);
+                                return `${percentage}% of bookings`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    function renderRevenueChart(data) {
+        const ctx = document.getElementById('revenueChart').getContext('2d');
+        
+        // Destroy existing chart if it exists
+        if (revenueChart) {
+            revenueChart.destroy();
+        }
+        
+        // Get top 6 services by current revenue
+        const topServices = Object.keys(data)
+            .sort((a, b) => data[b].current_revenue - data[a].current_revenue)
+            .slice(0, 6);
+            
+        // Prepare data for chart
+        const labels = ['Current', 'Predicted'];
+        const datasets = topServices.map((serviceId, index) => {
+            const service = data[serviceId];
+            const color = getChartColor(index);
+            
+            return {
+                label: service.service_name,
+                data: [service.current_revenue, service.predicted_revenue],
+                backgroundColor: color,
+                borderColor: color,
+                borderWidth: 1
+            };
+        });
+        
+        // Create the chart
+        revenueChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Revenue ($)'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: function(context) {
+                                const serviceId = topServices[context.datasetIndex];
+                                const service = data[serviceId];
+                                const growth = (service.revenue_growth * 100).toFixed(1);
+                                return `Revenue Growth: ${growth}%`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Update revenue forecast table
+        const tableBody = document.querySelector('#revenueForecastTable tbody');
+        tableBody.innerHTML = '';
+        
+        topServices.forEach(serviceId => {
+            const service = data[serviceId];
+            
+            const row = document.createElement('tr');
+            
+            // Service name
+            const nameCell = document.createElement('td');
+            nameCell.textContent = service.service_name;
+            row.appendChild(nameCell);
+            
+            // Current revenue
+            const currentCell = document.createElement('td');
+            currentCell.textContent = `$${service.current_revenue.toFixed(2)}`;
+            row.appendChild(currentCell);
+            
+            // Predicted revenue
+            const predictedCell = document.createElement('td');
+            predictedCell.textContent = `$${service.predicted_revenue.toFixed(2)}`;
+            row.appendChild(predictedCell);
+            
+            // Change
+            const changeCell = document.createElement('td');
+            const change = service.predicted_revenue - service.current_revenue;
+            changeCell.textContent = `$${change.toFixed(2)}`;
+            if (change > 0) {
+                changeCell.classList.add('trend-up');
+            } else if (change < 0) {
+                changeCell.classList.add('trend-down');
+            }
+            row.appendChild(changeCell);
+            
+            // Growth percentage
+            const growthCell = document.createElement('td');
+            const growth = (service.revenue_growth * 100).toFixed(1);
+            growthCell.textContent = `${growth}%`;
+            if (parseFloat(growth) > 0) {
+                growthCell.classList.add('trend-up');
+            } else if (parseFloat(growth) < 0) {
+                growthCell.classList.add('trend-down');
+            }
+            row.appendChild(growthCell);
+            
+            tableBody.appendChild(row);
+        });
+    }
+    
+    function renderDemandLists(data) {
+        const peakList = document.getElementById('peakDemandList');
+        const lowList = document.getElementById('lowDemandList');
+        
+        peakList.innerHTML = '';
+        lowList.innerHTML = '';
+        
+        // Render peak demand times
+        if (data.peak_times && data.peak_times.length > 0) {
+            data.peak_times.forEach(peak => {
+                const listItem = document.createElement('li');
+                listItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+                listItem.innerHTML = `
+                    ${peak.label}
+                    <span class="badge bg-success rounded-pill">${peak.percentage}%</span>
+                `;
+                peakList.appendChild(listItem);
+            });
+        } else {
+            const noData = document.createElement('li');
+            noData.className = 'list-group-item text-center';
+            noData.textContent = 'No peak times identified';
+            peakList.appendChild(noData);
+        }
+        
+        // Render low demand times
+        if (data.low_demand_times && data.low_demand_times.length > 0) {
+            data.low_demand_times.forEach(low => {
+                const listItem = document.createElement('li');
+                listItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+                listItem.innerHTML = `
+                    ${low.label}
+                    <span class="badge bg-secondary rounded-pill">${low.percentage}%</span>
+                `;
+                lowList.appendChild(listItem);
+            });
+        } else {
+            const noData = document.createElement('li');
+            noData.className = 'list-group-item text-center';
+            noData.textContent = 'No low demand times identified';
+            lowList.appendChild(noData);
+        }
+    }
+    
+    function updatePeakTimeInsight(data) {
+        const insightElement = document.getElementById('peakTimeInsight');
+        
+        if (data.peak_times && data.peak_times.length > 0) {
+            const peakLabels = data.peak_times.map(p => p.label).join(', ');
+            const granularity = document.getElementById('granularityFilter').value;
+            
+            let insight = '';
+            if (granularity === 'day_of_week') {
+                insight = `Your busiest days are ${peakLabels}. Consider optimizing staff scheduling to ensure adequate coverage during these peak times.`;
+            } else if (granularity === 'hour') {
+                insight = `Your salon experiences peak demand during ${peakLabels}. Ensure you have enough staff during these hours to provide excellent service.`;
+            } else if (granularity === 'day') {
+                insight = `Your salon sees higher traffic on ${peakLabels} of each month. Plan your inventory and staffing accordingly.`;
+            }
+            
+            insightElement.textContent = insight;
+        } else {
+            insightElement.textContent = 'Not enough booking data to identify clear peak times.';
+        }
+    }
+    
+    function renderRecommendations(data) {
+        const container = document.getElementById('recommendationsContainer');
+        container.innerHTML = '';
+        
+        if (data && data.length > 0) {
+            data.forEach(rec => {
+                const card = document.createElement('div');
+                card.className = `recommendation-card priority-${rec.priority}`;
+                
+                let iconClass = 'fa-lightbulb';
+                if (rec.type === 'resource_allocation') {
+                    iconClass = 'fa-people-arrows';
+                } else if (rec.type === 'pricing_opportunity') {
+                    iconClass = 'fa-dollar-sign';
+                } else if (rec.type === 'promotion_opportunity') {
+                    iconClass = 'fa-bullhorn';
+                } else if (rec.type === 'scheduling_optimization') {
+                    iconClass = 'fa-calendar-alt';
+                } else if (rec.type === 'service_improvement') {
+                    iconClass = 'fa-tools';
+                }
+                
+                let serviceInfo = '';
+                if (rec.service_id && rec.service_name) {
+                    serviceInfo = `<div class="mb-2"><strong>Service:</strong> ${rec.service_name}</div>`;
+                }
+                
+                card.innerHTML = `
+                    <div class="d-flex align-items-start">
+                        <div class="me-3">
+                            <i class="fas ${iconClass} fa-2x text-${rec.priority === 'high' ? 'danger' : (rec.priority === 'medium' ? 'warning' : 'secondary')}"></i>
+                        </div>
+                        <div>
+                            <h5 class="mb-1">
+                                ${rec.recommendation}
+                                <span class="badge bg-${rec.priority === 'high' ? 'danger' : (rec.priority === 'medium' ? 'warning' : 'secondary')} ms-2">
+                                    ${rec.priority.toUpperCase()}
+                                </span>
+                            </h5>
+                            ${serviceInfo}
+                            <div class="mb-2">${rec.expected_impact}</div>
+                            <div class="d-flex align-items-center">
+                                <small class="text-muted">AI Confidence:</small>
+                                <div class="confidence-indicator ms-2" style="width: 100px;">
+                                    <div class="confidence-bar bg-${getConfidenceColor(rec.confidence)}" 
+                                        style="width: ${(rec.confidence * 100).toFixed(0)}%"></div>
+                                </div>
+                                <small class="ms-2">${(rec.confidence * 100).toFixed(0)}%</small>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                container.appendChild(card);
+            });
+        } else {
+            container.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    Not enough data yet to generate business recommendations. Continue using the system to gather more data.
+                </div>
+            `;
+        }
+    }
+    
+    function renderSparkline(serviceId, data) {
+        const container = document.getElementById(`sparkline-${serviceId}`);
+        if (!container) return;
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = container.clientWidth;
+        canvas.height = container.clientHeight;
+        container.appendChild(canvas);
+        
+        const ctx = canvas.getContext('2d');
+        
+        // Set up the canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        if (!data || data.length < 2) {
+            // Not enough data points
+            ctx.font = '10px Arial';
+            ctx.fillStyle = '#6c757d';
+            ctx.textAlign = 'center';
+            ctx.fillText('Not enough data', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+        
+        // Determine min and max values
+        const minValue = Math.min(...data);
+        const maxValue = Math.max(...data);
+        const range = maxValue - minValue || 1;  // Avoid division by zero
+        
+        // Calculate points
+        const points = [];
+        const step = canvas.width / (data.length - 1);
+        
+        for (let i = 0; i < data.length; i++) {
+            const x = i * step;
+            const normalizedValue = (data[i] - minValue) / range;
+            const y = canvas.height - (normalizedValue * (canvas.height - 10)) - 5;  // 5px padding
+            points.push({ x, y });
+        }
+        
+        // Draw the line
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        
+        for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(points[i].x, points[i].y);
+        }
+        
+        // Determine color based on trend
+        let trend = 'stable';
+        if (data.length >= 2) {
+            const first = data[0];
+            const last = data[data.length - 1];
+            if (last > first * 1.05) {
+                trend = 'up';
+            } else if (last < first * 0.95) {
+                trend = 'down';
+            }
+        }
+        
+        // Set line style
+        ctx.lineWidth = 2;
+        if (trend === 'up') {
+            ctx.strokeStyle = '#28a745';
+        } else if (trend === 'down') {
+            ctx.strokeStyle = '#dc3545';
+        } else {
+            ctx.strokeStyle = '#6c757d';
+        }
+        
+        ctx.stroke();
+        
+        // Add dots for data points
+        points.forEach(point => {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
+            ctx.fillStyle = ctx.strokeStyle;
+            ctx.fill();
+        });
+    }
+    
+    function getConfidenceColor(confidence) {
+        if (confidence >= 0.8) {
+            return 'success';
+        } else if (confidence >= 0.6) {
+            return 'info';
+        } else if (confidence >= 0.4) {
+            return 'warning';
+        } else {
+            return 'danger';
+        }
+    }
+    
+    function getChartColor(index) {
+        const colors = [
+            'rgba(75, 192, 192, 0.7)',   // Teal
+            'rgba(54, 162, 235, 0.7)',   // Blue
+            'rgba(255, 159, 64, 0.7)',   // Orange
+            'rgba(153, 102, 255, 0.7)',  // Purple
+            'rgba(255, 99, 132, 0.7)',   // Red
+            'rgba(255, 205, 86, 0.7)',   // Yellow
+            'rgba(201, 203, 207, 0.7)',  // Grey
+            'rgba(75, 192, 192, 0.7)'    // Teal (repeat)
+        ];
+        
+        return colors[index % colors.length];
+    }
+});
+</script>
+{% endblock %}

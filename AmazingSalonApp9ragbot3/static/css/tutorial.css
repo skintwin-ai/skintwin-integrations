@@ -1,0 +1,193 @@
+.tutorial-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    z-index: 9000;
+    display: none;
+}
+
+.tutorial-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 10px;
+    max-width: 500px;
+    width: 90%;
+    z-index: 9100;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    color: #333;
+    display: none;
+}
+
+.tutorial-modal.dark-theme {
+    background-color: #212529;
+    color: #f8f9fa;
+    border: 1px solid #495057;
+}
+
+.tutorial-spotlight {
+    position: absolute;
+    pointer-events: none;
+    z-index: 9050;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.8);
+    border-radius: 4px;
+    transition: all 0.3s ease;
+}
+
+.tutorial-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    border-bottom: 1px solid #dee2e6;
+    padding-bottom: 10px;
+}
+
+.tutorial-header h4 {
+    margin: 0;
+    font-weight: 600;
+}
+
+.tutorial-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #6c757d;
+}
+
+.tutorial-content {
+    margin-bottom: 20px;
+}
+
+.tutorial-navigation {
+    display: flex;
+    justify-content: space-between;
+}
+
+.tutorial-btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.tutorial-btn-primary {
+    background-color: #007bff;
+    color: white;
+}
+
+.tutorial-btn-secondary {
+    background-color: #6c757d;
+    color: white;
+}
+
+.tutorial-btn-outline {
+    background-color: transparent;
+    border: 1px solid #6c757d;
+    color: #6c757d;
+}
+
+.tutorial-btn-outline:hover {
+    background-color: #f8f9fa;
+}
+
+.tutorial-progress {
+    display: flex;
+    justify-content: center;
+    margin-top: 15px;
+}
+
+.tutorial-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: #dee2e6;
+    margin: 0 5px;
+}
+
+.tutorial-dot.active {
+    background-color: #007bff;
+}
+
+.tutorial-tooltip {
+    position: absolute;
+    background-color: #fff;
+    color: #333;
+    padding: 10px 15px;
+    border-radius: 4px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+    max-width: 300px;
+    z-index: 9100;
+    transition: all 0.3s ease;
+    pointer-events: none;
+}
+
+.tutorial-tooltip.dark-theme {
+    background-color: #212529;
+    color: #f8f9fa;
+    border: 1px solid #495057;
+}
+
+.tutorial-tooltip::before {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 0;
+    border-style: solid;
+}
+
+.tutorial-tooltip.top::before {
+    border-width: 10px 10px 0 10px;
+    border-color: #fff transparent transparent transparent;
+    bottom: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.tutorial-tooltip.bottom::before {
+    border-width: 0 10px 10px 10px;
+    border-color: transparent transparent #fff transparent;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.tutorial-tooltip.left::before {
+    border-width: 10px 0 10px 10px;
+    border-color: transparent transparent transparent #fff;
+    right: -10px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.tutorial-tooltip.right::before {
+    border-width: 10px 10px 10px 0;
+    border-color: transparent #fff transparent transparent;
+    left: -10px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.tutorial-tooltip.dark-theme.top::before {
+    border-color: #212529 transparent transparent transparent;
+}
+
+.tutorial-tooltip.dark-theme.bottom::before {
+    border-color: transparent transparent #212529 transparent;
+}
+
+.tutorial-tooltip.dark-theme.left::before {
+    border-color: transparent transparent transparent #212529;
+}
+
+.tutorial-tooltip.dark-theme.right::before {
+    border-color: transparent #212529 transparent transparent;
+}

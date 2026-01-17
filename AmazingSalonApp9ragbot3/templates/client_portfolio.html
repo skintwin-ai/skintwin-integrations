@@ -1,0 +1,114 @@
+
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('portfolio.index') }}">Portfolios</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">{{ client.name }}</li>
+                </ol>
+            </nav>
+            <h1>Style Portfolio: {{ client.name }}</h1>
+            <p class="lead">Visual history of styles and treatments</p>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-lg-4">
+            <div class="card mb-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">Client Information</h5>
+                </div>
+                <div class="card-body">
+                    <p><strong>Email:</strong> {{ client.email }}</p>
+                    <p><strong>Phone:</strong> {{ client.phone }}</p>
+                    <p><strong>Loyalty Points:</strong> {{ client.loyalty_points }}</p>
+                    <p><strong>Preferences:</strong></p>
+                    <ul>
+                        <li>Hair Length: {{ client.hair_length }}</li>
+                        <li>Style: {{ client.style_preference }}</li>
+                        <li>Color: {{ client.color_preference }}</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">Add New Portfolio Entry</h5>
+                </div>
+                <div class="card-body">
+                    <form action="{{ url_for('portfolio.add_portfolio_entry', client_id=client.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        
+                        <div class="mb-3">
+                            <label for="service_id" class="form-label">Service</label>
+                            <select class="form-select" id="service_id" name="service_id" required>
+                                <option value="">Select a service</option>
+                                {% for service in services %}
+                                <option value="{{ service.id }}">{{ service.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="notes" class="form-label">Notes</label>
+                            <textarea class="form-control" id="notes" name="notes" rows="3"></textarea>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="photo_url" class="form-label">Photo URL</label>
+                            <input type="text" class="form-control" id="photo_url" name="photo_url" 
+                                   placeholder="URL to style photo (in production use file upload)">
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">Add to Portfolio</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Style History</h5>
+                </div>
+                <div class="card-body">
+                    {% if portfolio_entries %}
+                        <div class="row row-cols-1 row-cols-md-2 g-4">
+                            {% for entry in portfolio_entries %}
+                            <div class="col">
+                                <div class="card h-100">
+                                    <img src="{{ entry.photo_url }}" class="card-img-top" alt="Style Photo" 
+                                         onerror="this.src='/static/img/default_style.jpg';">
+                                    <div class="card-body">
+                                        <h5 class="card-title">{{ entry.service_name }}</h5>
+                                        <p class="card-text">{{ entry.notes }}</p>
+                                        <p class="card-text">
+                                            <small class="text-muted">
+                                                Stylist: {{ entry.stylist_name }}<br>
+                                                Date: {{ entry.date_time }}
+                                            </small>
+                                        </p>
+                                    </div>
+                                    <div class="card-footer">
+                                        <form action="{{ url_for('portfolio.delete_portfolio_entry', client_id=client.id, entry_id=entry.id) }}" method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure?')">Delete</button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info">No portfolio entries yet. Add the first one!</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

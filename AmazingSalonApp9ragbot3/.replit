@@ -1,0 +1,113 @@
+modules = ["python-3.11", "postgresql-16"]
+
+[nix]
+channel = "stable-24_05"
+
+[workflows]
+runButton = "Run Salon App Enhanced"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start Flask Server"
+
+[[workflows.workflow]]
+name = "Start Flask Server"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python -m flask run --host=0.0.0.0 --port=5000"
+waitForPort = 5000
+
+[[workflows.workflow]]
+name = "Automated Tasks"
+author = 25622157
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python -c \"from utils.loyalty_utils import check_and_send_promotions; check_and_send_promotions()\""
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python -c \"from utils.inventory_utils import check_and_reorder_inventory; check_and_reorder_inventory()\""
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python -c \"from routes.reports import generate_monthly_report; generate_monthly_report()\""
+
+[[workflows.workflow]]
+name = "Run Flask App"
+author = 25622157
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "FLASK_APP=app.py FLASK_ENV=development python -m flask run --host=0.0.0.0 --port=5000"
+
+[[workflows.workflow]]
+name = "Run Fixed Flask App"
+author = 25622157
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"
+
+[[workflows.workflow]]
+name = "Run Salon App"
+author = 25622157
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "FLASK_APP=app.py FLASK_ENV=development pip install -r requirements.txt"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "FLASK_APP=app.py FLASK_ENV=development python main.py"
+
+[[workflows.workflow]]
+name = "Run Fixed Salon App"
+author = 25622157
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "FLASK_APP=app.py FLASK_DEBUG=1 python -m flask run --host=0.0.0.0 --port=5000"
+
+[[workflows.workflow]]
+name = "Run Salon App Fixed"
+author = 25622157
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "FLASK_APP=app.py FLASK_DEBUG=1 python main.py"
+
+[[workflows.workflow]]
+name = "Run Salon App Enhanced"
+author = 25622157
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "FLASK_APP=app.py FLASK_DEBUG=1 python main.py"
+
+[deployment]
+run = ["sh", "-c", "python main.py"]
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[agent]
+expertMode = true

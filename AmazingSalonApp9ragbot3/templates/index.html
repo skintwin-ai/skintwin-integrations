@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-4">Welcome to Salon Management System</h1>
+            <p class="lead">Your complete solution for salon management, booking, and client tracking.</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Client Management</h5>
+                    <p class="card-text">Manage your clients, view their profiles, and track their preferences.</p>
+                    <a href="{{ url_for('clients.index') }}" class="btn btn-primary">View Clients</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Appointments</h5>
+                    <p class="card-text">Schedule and manage appointments for your clients.</p>
+                    <a href="{{ url_for('appointments.index') }}" class="btn btn-primary">View Appointments</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Inventory Management</h5>
+                    <p class="card-text">Track your inventory, manage products, and place purchase orders.</p>
+                    <a href="{{ url_for('inventory.index') }}" class="btn btn-primary">View Inventory</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Point of Sale</h5>
+                    <p class="card-text">Process sales, manage transactions, and track revenue.</p>
+                    <a href="{{ url_for('pos.index') }}" class="btn btn-primary">Open POS</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Services</h5>
+                    <p class="card-text">Manage and customize the services offered by your salon.</p>
+                    <a href="{{ url_for('services.index') }}" class="btn btn-primary">View Services</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Staff Schedule</h5>
+                    <p class="card-text">Manage your staff schedules and shifts.</p>
+                    <a href="{{ url_for('staff.schedule') }}" class="btn btn-primary">View Schedule</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

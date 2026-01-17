@@ -1,0 +1,82 @@
+
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2>Treatment Preview</h2>
+    <p class="lead">See how different treatments could enhance your look</p>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Upload Your Photo</h5>
+                    <form id="previewForm">
+                        <div class="mb-3">
+                            <label for="imageUpload" class="form-label">Select Image</label>
+                            <input type="file" class="form-control" id="imageUpload" name="image" accept="image/*" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Treatment Type</label>
+                            <select class="form-select" name="treatment_type" required>
+                                <option value="anti_aging">Anti-Aging Treatment</option>
+                                <option value="acne">Acne Treatment</option>
+                                <option value="brightening">Skin Brightening</option>
+                                <option value="hydration">Hydration Boost</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Generate Preview</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Preview</h5>
+                    <div id="previewContainer" class="text-center">
+                        <p class="preview-placeholder">Preview will appear here</p>
+                        <img id="previewImage" style="max-width: 100%; display: none;">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('previewForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const formData = new FormData(e.target);
+    const submitButton = e.target.querySelector('button[type="submit"]');
+    const previewImage = document.getElementById('previewImage');
+    const placeholder = document.querySelector('.preview-placeholder');
+    
+    submitButton.disabled = true;
+    submitButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Generating...';
+    
+    try {
+        const response = await fetch('/api/generate-preview', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.preview_url) {
+            previewImage.src = data.preview_url;
+            previewImage.style.display = 'block';
+            placeholder.style.display = 'none';
+        } else {
+            throw new Error(data.error || 'Failed to generate preview');
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Generate Preview';
+    }
+});
+</script>
+{% endblock %}

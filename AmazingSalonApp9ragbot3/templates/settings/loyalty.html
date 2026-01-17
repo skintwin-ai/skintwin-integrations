@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2>System Settings</h2>
+    
+    <ul class="nav nav-tabs mb-4">
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'general' %}active{% endif %}" href="{{ url_for('settings.index') }}">
+                General Settings
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'payment' %}active{% endif %}" href="{{ url_for('settings.payment_settings') }}">
+                Payment Settings
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'loyalty' %}active{% endif %}" href="{{ url_for('settings.loyalty_settings') }}">
+                Loyalty Program
+            </a>
+        </li>
+    </ul>
+    
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Loyalty Program Settings</h5>
+                </div>
+                <div class="card-body">
+                    <form action="{{ url_for('settings.update_settings') }}" method="POST">
+                        <input type="hidden" name="category" value="loyalty">
+                        <input type="hidden" name="redirect_to" value="loyalty_settings">
+                        
+                        <div class="mb-3">
+                            <label for="points_to_dollar_ratio" class="form-label">Points to Dollar Ratio</label>
+                            <div class="input-group">
+                                <input type="number" step="0.01" min="0.01" class="form-control" id="points_to_dollar_ratio" 
+                                    name="setting_points_to_dollar_ratio" 
+                                    value="{{ settings | selectattr('key', 'equalto', 'points_to_dollar_ratio') | map(attribute='value') | first | default('0.1') }}">
+                                <span class="input-group-text">dollars per point</span>
+                            </div>
+                            <div class="form-text">How much each loyalty point is worth in dollars when redeemed (e.g., 0.1 = $0.10 per point)</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="loyalty_points_per_dollar" class="form-label">Points Earned Per Dollar</label>
+                            <div class="input-group">
+                                <input type="number" step="1" min="1" class="form-control" id="loyalty_points_per_dollar" 
+                                    name="setting_loyalty_points_per_dollar" 
+                                    value="{{ settings | selectattr('key', 'equalto', 'loyalty_points_per_dollar') | map(attribute='value') | first | default('1') }}">
+                                <span class="input-group-text">points per dollar</span>
+                            </div>
+                            <div class="form-text">How many loyalty points clients earn for each dollar spent (e.g., 1 = 1 point per dollar)</div>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-header bg-light">
+                                Loyalty Tiers
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="card mb-3">
+                                            <div class="card-body text-center">
+                                                <h5 class="card-title">Bronze</h5>
+                                                <p class="card-text">$0 - $499</p>
+                                                <ul class="list-unstyled">
+                                                    <li>Standard loyalty points</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="card mb-3 border-silver">
+                                            <div class="card-body text-center">
+                                                <h5 class="card-title">Silver</h5>
+                                                <p class="card-text">$500 - $999</p>
+                                                <ul class="list-unstyled">
+                                                    <li>10% bonus points</li>
+                                                    <li>Priority booking</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="card mb-3 border-gold">
+                                            <div class="card-body text-center">
+                                                <h5 class="card-title">Gold</h5>
+                                                <p class="card-text">$1000+</p>
+                                                <ul class="list-unstyled">
+                                                    <li>25% bonus points</li>
+                                                    <li>Priority booking</li>
+                                                    <li>Exclusive offers</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="form-text">Tier levels are based on total customer spending and are automatically calculated.</div>
+                            </div>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                        <a href="{{ url_for('auth.admin_dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .border-silver {
+        border-color: #C0C0C0;
+    }
+    .border-gold {
+        border-color: #FFD700;
+    }
+</style>
+{% endblock %}

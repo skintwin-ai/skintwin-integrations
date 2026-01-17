@@ -1,0 +1,213 @@
+
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-12 mb-4">
+            <h1 class="text-center">Intelligent Appointment Booking</h1>
+            <p class="text-center lead">Our AI-powered system will recommend the optimal appointment times</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-5">
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0">Booking Preferences</h4>
+                </div>
+                <div class="card-body">
+                    <form id="bookingForm">
+                        <div class="mb-3">
+                            <label for="client" class="form-label">Select Client</label>
+                            <select class="form-select" id="client" name="client_id" required>
+                                <option value="">Select a client</option>
+                                {% for client in clients %}
+                                <option value="{{ client.id }}">{{ client.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="service" class="form-label">Select Service</label>
+                            <select class="form-select" id="service" name="service_id" required>
+                                <option value="">Select a service</option>
+                                {% for service in services %}
+                                <option value="{{ service.id }}">{{ service.name }} ({{ service.duration }} min)</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="stylist" class="form-label">Select Stylist</label>
+                            <select class="form-select" id="stylist" name="stylist_id" required>
+                                <option value="">Select a stylist</option>
+                                {% for stylist in stylists %}
+                                <option value="{{ stylist.id }}">{{ stylist.username }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary w-100" id="getRecommendationsBtn">
+                            Get Smart Recommendations
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-7" id="recommendationsContainer" style="display: none;">
+            <div class="card shadow-sm">
+                <div class="card-header bg-success text-white">
+                    <h4 class="mb-0">AI-Recommended Time Slots</h4>
+                </div>
+                <div class="card-body">
+                    <div id="smartSuggestions" class="list-group">
+                        <!-- Suggestions will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Booking Confirmation Modal -->
+<div class="modal fade" id="bookingModal" tabindex="-1" aria-labelledby="bookingModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="bookingModalLabel">Confirm Booking</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="confirmation-details">
+                    <p><strong>Client:</strong> <span id="modalClientName"></span></p>
+                    <p><strong>Service:</strong> <span id="modalServiceName"></span></p>
+                    <p><strong>Stylist:</strong> <span id="modalStylistName"></span></p>
+                    <p><strong>Date:</strong> <span id="modalDate"></span></p>
+                    <p><strong>Time:</strong> <span id="modalTime"></span></p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form action="{{ url_for('smart_booking.book_appointment') }}" method="POST" id="confirmBookingForm">
+                    <input type="hidden" name="client_id" id="confirmClientId">
+                    <input type="hidden" name="service_id" id="confirmServiceId">
+                    <input type="hidden" name="stylist_id" id="confirmStylistId">
+                    <input type="hidden" name="start_time" id="confirmStartTime">
+                    <button type="submit" class="btn btn-success">Confirm Booking</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const bookingForm = document.getElementById('bookingForm');
+    const recommendationsContainer = document.getElementById('recommendationsContainer');
+    const smartSuggestions = document.getElementById('smartSuggestions');
+    
+    // Format date object for display
+    function formatDate(dateStr) {
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('en-US', { 
+            weekday: 'long', 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+        });
+    }
+    
+    // Format time object for display
+    function formatTime(dateStr) {
+        const date = new Date(dateStr);
+        return date.toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit'
+        });
+    }
+    
+    // Handle form submission
+    bookingForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(bookingForm);
+        
+        fetch('{{ url_for("smart_booking.get_suggestions") }}', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Clear previous suggestions
+            smartSuggestions.innerHTML = '';
+            
+            // Show recommendations container
+            recommendationsContainer.style.display = 'block';
+            
+            // Add each suggestion
+            data.slots.forEach(slot => {
+                const startTime = new Date(slot.start_time);
+                const endTime = new Date(slot.end_time);
+                
+                const suggestionHtml = `
+                    <div class="list-group-item list-group-item-action">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1">${formatDate(startTime)}</h5>
+                            <small class="badge bg-success">AI Match: ${slot.score}%</small>
+                        </div>
+                        <p class="mb-1">
+                            <strong>Time:</strong> ${formatTime(startTime)} - ${formatTime(endTime)}
+                        </p>
+                        <p class="mb-0 text-muted">${slot.reasoning}</p>
+                        <button class="btn btn-outline-primary mt-2 book-slot" 
+                                data-client-id="${formData.get('client_id')}"
+                                data-client-name="${data.client.name}"
+                                data-service-id="${formData.get('service_id')}"
+                                data-service-name="${data.service.name}"
+                                data-stylist-id="${formData.get('stylist_id')}"
+                                data-stylist-name="${data.stylist.username}"
+                                data-start-time="${slot.start_time}"
+                                data-date="${formatDate(startTime)}"
+                                data-time="${formatTime(startTime)}">
+                            Book This Slot
+                        </button>
+                    </div>
+                `;
+                
+                smartSuggestions.innerHTML += suggestionHtml;
+            });
+            
+            // Add event listeners to the booking buttons
+            document.querySelectorAll('.book-slot').forEach(button => {
+                button.addEventListener('click', function() {
+                    // Set modal values
+                    document.getElementById('modalClientName').textContent = this.dataset.clientName;
+                    document.getElementById('modalServiceName').textContent = this.dataset.serviceName;
+                    document.getElementById('modalStylistName').textContent = this.dataset.stylistName;
+                    document.getElementById('modalDate').textContent = this.dataset.date;
+                    document.getElementById('modalTime').textContent = this.dataset.time;
+                    
+                    // Set form values
+                    document.getElementById('confirmClientId').value = this.dataset.clientId;
+                    document.getElementById('confirmServiceId').value = this.dataset.serviceId;
+                    document.getElementById('confirmStylistId').value = this.dataset.stylistId;
+                    document.getElementById('confirmStartTime').value = this.dataset.startTime;
+                    
+                    // Show modal
+                    const bookingModal = new bootstrap.Modal(document.getElementById('bookingModal'));
+                    bookingModal.show();
+                });
+            });
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while fetching recommendations.');
+        });
+    });
+});
+</script>
+{% endblock %}

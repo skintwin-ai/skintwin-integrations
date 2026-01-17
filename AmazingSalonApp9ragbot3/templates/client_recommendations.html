@@ -1,0 +1,195 @@
+
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1>Style Recommendations for {{ client.name }}</h1>
+            <p class="lead">Personalized style suggestions based on preferences and trends</p>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">Client Preferences</h5>
+                </div>
+                <div class="card-body">
+                    <form action="{{ url_for('recommendations.update_client_preferences', client_id=client.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        
+                        <div class="mb-3">
+                            <label for="hair_length" class="form-label">Hair Length</label>
+                            <select class="form-select" id="hair_length" name="hair_length">
+                                <option value="short" {% if client.hair_length == 'short' %}selected{% endif %}>Short</option>
+                                <option value="medium" {% if client.hair_length == 'medium' %}selected{% endif %}>Medium</option>
+                                <option value="long" {% if client.hair_length == 'long' %}selected{% endif %}>Long</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="style_preference" class="form-label">Style Preference</label>
+                            <select class="form-select" id="style_preference" name="style_preference">
+                                <option value="classic" {% if client.style_preference == 'classic' %}selected{% endif %}>Classic</option>
+                                <option value="modern" {% if client.style_preference == 'modern' %}selected{% endif %}>Modern</option>
+                                <option value="edgy" {% if client.style_preference == 'edgy' %}selected{% endif %}>Edgy/Creative</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="color_preference" class="form-label">Color Preference</label>
+                            <select class="form-select" id="color_preference" name="color_preference">
+                                <option value="natural" {% if client.color_preference == 'natural' %}selected{% endif %}>Natural</option>
+                                <option value="bold" {% if client.color_preference == 'bold' %}selected{% endif %}>Bold</option>
+                                <option value="trendy" {% if client.color_preference == 'trendy' %}selected{% endif %}>Trendy</option>
+                            </select>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">Update Preferences</button>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="card mt-4">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">Upload Photo</h5>
+                </div>
+                <div class="card-body">
+                    <p>Upload a client photo to generate even more accurate recommendations.</p>
+                    <div class="mb-3">
+                        <label for="clientPhoto" class="form-label">Client Photo</label>
+                        <input class="form-control" type="file" id="clientPhoto" accept="image/*">
+                    </div>
+                    <button type="button" class="btn btn-outline-primary" id="uploadPhotoBtn">Upload & Analyze</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">AI-Powered Style Recommendations</h5>
+                </div>
+                <div class="card-body p-0">
+                    {% if recommendations %}
+                        <div class="list-group list-group-flush">
+                            {% for recommendation in recommendations %}
+                                <div class="list-group-item recommendation-item" data-service-id="{{ recommendation.service.id }}">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <h5 class="mb-1">{{ recommendation.service.name }}</h5>
+                                            <p class="mb-1">{{ recommendation.reasoning }}</p>
+                                            <small class="text-muted">Duration: {{ recommendation.service.duration }} min | ${{ "%.2f"|format(recommendation.service.price) }}</small>
+                                        </div>
+                                        <div>
+                                            <span class="badge bg-success rounded-pill confidence-badge">{{ "%.0f"|format(recommendation.confidence) }}% Match</span>
+                                        </div>
+                                    </div>
+                                    <div class="d-flex mt-2 action-buttons">
+                                        <button class="btn btn-sm btn-info me-2 preview-btn" data-service-id="{{ recommendation.service.id }}" data-client-id="{{ client.id }}">
+                                            <i class="bi bi-eye"></i> Preview
+                                        </button>
+                                        <a href="{{ url_for('appointments.create') }}?client_id={{ client.id }}&service_id={{ recommendation.service.id }}" class="btn btn-sm btn-primary">
+                                            Book Now
+                                        </a>
+                                    </div>
+                                    <div class="style-preview-container mt-3" id="preview-{{ recommendation.service.id }}" style="display: none;">
+                                        <div class="row style-previews">
+                                            <!-- Previews will be inserted here by JavaScript -->
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="text-center p-4">
+                            <p>No recommendations available. Update client preferences to generate suggestions.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle preview buttons
+    const previewButtons = document.querySelectorAll('.preview-btn');
+    
+    previewButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const serviceId = this.getAttribute('data-service-id');
+            const clientId = this.getAttribute('data-client-id');
+            const previewContainer = document.getElementById(`preview-${serviceId}`);
+            
+            // Toggle visibility
+            if (previewContainer.style.display === 'none') {
+                // Show loading state
+                previewContainer.style.display = 'block';
+                const previewsRow = previewContainer.querySelector('.style-previews');
+                previewsRow.innerHTML = '<div class="col-12 text-center"><p>Generating AI previews...</p></div>';
+                
+                // In a real implementation, this would call the AI service
+                // For now, we'll simulate with a timeout
+                setTimeout(() => {
+                    // Create fake previews (in production would use actual images from the backend)
+                    previewsRow.innerHTML = `
+                        <div class="col-md-4">
+                            <img src="https://source.unsplash.com/random/300x300/?haircut&sig=${Math.random()}" class="img-fluid rounded mb-2" alt="Style Preview">
+                        </div>
+                        <div class="col-md-4">
+                            <img src="https://source.unsplash.com/random/300x300/?hairstyle&sig=${Math.random()}" class="img-fluid rounded mb-2" alt="Style Preview">
+                        </div>
+                        <div class="col-md-4">
+                            <img src="https://source.unsplash.com/random/300x300/?salon&sig=${Math.random()}" class="img-fluid rounded mb-2" alt="Style Preview">
+                        </div>
+                    `;
+                }, 1500);
+            } else {
+                previewContainer.style.display = 'none';
+            }
+        });
+    });
+    
+    // Upload photo button (simulated functionality)
+    const uploadButton = document.getElementById('uploadPhotoBtn');
+    if (uploadButton) {
+        uploadButton.addEventListener('click', function() {
+            const fileInput = document.getElementById('clientPhoto');
+            if (fileInput.files.length > 0) {
+                alert('Photo uploaded! In a production environment, this would be analyzed by our AI to generate even more personalized recommendations.');
+                // In a real implementation, this would upload the photo and trigger AI analysis
+            } else {
+                alert('Please select a photo first.');
+            }
+        });
+    }
+});
+</script>
+
+<style>
+.recommendation-item {
+    transition: all 0.2s ease;
+    border-left: 3px solid transparent;
+}
+
+.recommendation-item:hover {
+    border-left-color: var(--bs-info);
+    background-color: rgba(13, 202, 240, 0.05);
+}
+
+.confidence-badge {
+    min-width: 60px;
+}
+
+.style-preview-container {
+    background-color: rgba(0,0,0,0.03);
+    border-radius: 8px;
+    padding: 10px;
+    margin-top: 10px;
+}
+</style>
+{% endblock %}

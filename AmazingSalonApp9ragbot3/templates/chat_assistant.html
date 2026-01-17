@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="row mb-4">
+        <div class="col-md-12 text-center">
+            <h1 class="display-4 mb-4">AI Chat Assistant</h1>
+            <p class="lead mb-5">Get intelligent assistance with salon operations and client management</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card bg-dark text-light mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">Conversations</h4>
+                    <form action="{{ url_for('chat_assistant.create_conversation') }}" method="post" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-primary">
+                            <i class="bi bi-plus-lg"></i> New
+                        </button>
+                    </form>
+                </div>
+                <div class="card-body conversation-list">
+                    {% if conversations %}
+                        {% for conversation in conversations %}
+                            <div class="conversation-item p-2 mb-2 rounded">
+                                <a href="{{ url_for('chat_assistant.view_conversation', id=conversation.id) }}" class="text-decoration-none text-light">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <h5 class="mb-0">{{ conversation.title }}</h5>
+                                        <small class="text-muted">{{ conversation.updated_at.strftime('%m/%d/%Y') }}</small>
+                                    </div>
+                                </a>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-center p-4">
+                            <p>No conversations yet. Start a new one!</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card bg-dark text-light">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">Features</h4>
+                    <a href="{{ url_for('chat_assistant.setup_api_key') }}" class="btn btn-sm btn-outline-info">
+                        <i class="bi bi-key"></i> Update API Key
+                    </a>
+                </div>
+                <div class="card-body">
+                    <div class="feature-item mb-3">
+                        <div class="d-flex">
+                            <div class="me-3">
+                                <i class="bi bi-archive text-info" style="font-size: 1.5rem;"></i>
+                            </div>
+                            <div>
+                                <h5>Context-Aware Memory</h5>
+                                <p class="mb-0">The assistant remembers past conversations and client preferences</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="feature-item mb-3">
+                        <div class="d-flex">
+                            <div class="me-3">
+                                <i class="bi bi-search text-info" style="font-size: 1.5rem;"></i>
+                            </div>
+                            <div>
+                                <h5>Intelligent Retrieval</h5>
+                                <p class="mb-0">Finds relevant information from your salon database</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="feature-item mb-3">
+                        <div class="d-flex">
+                            <div class="me-3">
+                                <i class="bi bi-lightbulb text-info" style="font-size: 1.5rem;"></i>
+                            </div>
+                            <div>
+                                <h5>Smart Recommendations</h5>
+                                <p class="mb-0">Get insights based on client history and salon data</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-center mt-4">
+                        <div class="badge {{ 'bg-success' if api_key_configured else 'bg-danger' }} p-2">
+                            <i class="bi {{ 'bi-check-circle' if api_key_configured else 'bi-exclamation-circle' }} me-1"></i>
+                            API Key {{ 'Configured' if api_key_configured else 'Not Configured' }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-8">
+            <div class="card bg-dark text-light">
+                <div class="card-header">
+                    <h4>Welcome to Salon AI Assistant</h4>
+                </div>
+                <div class="card-body">
+                    <div class="p-4 text-center">
+                        <div class="mb-4">
+                            <i class="bi bi-robot text-info" style="font-size: 4rem;"></i>
+                        </div>
+                        <h3 class="mb-3">How can I help you today?</h3>
+                        <p class="lead mb-4">Start a new conversation to get assistance with salon management</p>
+                        <form action="{{ url_for('chat_assistant.create_conversation') }}" method="post">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-lg btn-primary">
+                                <i class="bi bi-chat-dots me-2"></i> Start New Conversation
+                            </button>
+                        </form>
+                    </div>
+
+                    <div class="mt-5">
+                        <h5 class="mb-3">Example questions you can ask:</h5>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <ul class="list-group list-group-flush bg-transparent">
+                                    <li class="list-group-item bg-transparent text-light">
+                                        <i class="bi bi-question-circle me-2 text-info"></i>
+                                        What services do we offer for color treatments?
+                                    </li>
+                                    <li class="list-group-item bg-transparent text-light">
+                                        <i class="bi bi-question-circle me-2 text-info"></i>
+                                        Find me information about Sarah Johnson
+                                    </li>
+                                    <li class="list-group-item bg-transparent text-light">
+                                        <i class="bi bi-question-circle me-2 text-info"></i>
+                                        What products are running low on inventory?
+                                    </li>
+                                </ul>
+                            </div>
+                            <div class="col-md-6">
+                                <ul class="list-group list-group-flush bg-transparent">
+                                    <li class="list-group-item bg-transparent text-light">
+                                        <i class="bi bi-question-circle me-2 text-info"></i>
+                                        What appointments do we have today?
+                                    </li>
+                                    <li class="list-group-item bg-transparent text-light">
+                                        <i class="bi bi-question-circle me-2 text-info"></i>
+                                        Can you analyze our top-selling services?
+                                    </li>
+                                    <li class="list-group-item bg-transparent text-light">
+                                        <i class="bi bi-question-circle me-2 text-info"></i>
+                                        Help me recommend a style for a client with short hair
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.conversation-item {
+    background-color: rgba(255, 255, 255, 0.05);
+    transition: background-color 0.2s;
+}
+.conversation-item:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+.conversation-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+</style>
+{% endblock %}

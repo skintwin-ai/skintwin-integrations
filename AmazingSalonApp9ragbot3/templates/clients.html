@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+
+{% block title %}Clients{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Client Management</h1>
+    
+    <!-- Alert Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category if category != 'message' else 'info' }} alert-dismissible fade show">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <!-- Client Form -->
+    <div class="card mb-4">
+        <div class="card-header">
+            {% if client %}Edit Client{% else %}Add New Client{% endif %}
+        </div>
+        <div class="card-body">
+            <form method="post" action="{{ url_for('clients.update', id=client.id) if client else url_for('clients.create') }}">
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <label for="name" class="form-label">Name</label>
+                        <input type="text" class="form-control" id="name" name="name" value="{{ client.name if client else '' }}" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="email" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="email" name="email" value="{{ client.email if client else '' }}" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="phone" class="form-label">Phone</label>
+                        <input type="tel" class="form-control" id="phone" name="phone" value="{{ client.phone if client else '' }}" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">{{ 'Update Client' if client else 'Add Client' }}</button>
+                {% if client %}
+                <a href="{{ url_for('clients.index') }}" class="btn btn-secondary">Cancel</a>
+                {% endif %}
+            </form>
+        </div>
+    </div>
+
+    <!-- Client List -->
+    <div class="card">
+        <div class="card-header">
+            Client List
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Phone</th>
+                            <th>Loyalty Points</th>
+                            <th>Total Spent</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for client in clients %}
+                        <tr>
+                            <td>{{ client.name }}</td>
+                            <td>{{ client.email }}</td>
+                            <td>{{ client.phone }}</td>
+                            <td>{{ client.loyalty_points }}</td>
+                            <td>${{ "%.2f"|format(client.total_spent) }}</td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="{{ url_for('clients.update', id=client.id) }}" class="btn btn-info">Edit</a>
+                                    <a href="{{ url_for('portfolio.view_client_portfolio', client_id=client.id) }}" class="btn btn-secondary">Portfolio</a>
+                                    <a href="{{ url_for('recommendations.client_recommendations', client_id=client.id) }}" class="btn btn-success">Recommendations</a>
+                                    <form method="post" action="{{ url_for('clients.delete', id=client.id) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this client?');">
+                                        <button type="submit" class="btn btn-danger">Delete</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="text-center">No clients found</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

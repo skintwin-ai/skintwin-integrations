@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2>Payment Settings</h2>
+    
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="list-group">
+                <a href="{{ url_for('settings.index') }}" class="list-group-item list-group-item-action">
+                    Overview
+                </a>
+                <a href="{{ url_for('settings.payment_settings') }}" class="list-group-item list-group-item-action active">
+                    Payment Settings
+                </a>
+                <a href="{{ url_for('settings.loyalty_settings') }}" class="list-group-item list-group-item-action">
+                    Loyalty Program
+                </a>
+            </div>
+        </div>
+        <div class="col-md-9">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h4>Payment Processors</h4>
+                    <ul class="nav nav-tabs card-header-tabs" id="payment-tabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="stripe-tab" data-bs-toggle="tab" data-bs-target="#stripe" type="button" role="tab" aria-controls="stripe" aria-selected="true">Stripe</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="paystack-tab" data-bs-toggle="tab" data-bs-target="#paystack" type="button" role="tab" aria-controls="paystack" aria-selected="false">Paystack</button>
+                        </li>
+                    </ul>
+                </div>
+                <div class="card-body">
+                    <div class="tab-content" id="payment-tabs-content">
+                        <!-- Stripe Configuration -->
+                        <div class="tab-pane fade show active" id="stripe" role="tabpanel" aria-labelledby="stripe-tab">
+                            <form action="{{ url_for('settings.update_stripe_keys') }}" method="POST">
+                                <div class="mb-3">
+                                    <div class="alert alert-info">
+                                        <i class="fas fa-info-circle"></i> Stripe is a global payment processor. You will need a Stripe account to accept payments.
+                                        <a href="https://dashboard.stripe.com/register" target="_blank" class="alert-link">Sign up for Stripe</a> if you don't have an account.
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="stripe_public_key" class="form-label">Stripe Publishable Key</label>
+                                    <input type="text" class="form-control" id="stripe_public_key" name="stripe_public_key" 
+                                           value="{{ stripe_public_key or '' }}"
+                                           placeholder="pk_test_...">
+                                    <div class="form-text">Your publishable key starts with 'pk_test_' or 'pk_live_'</div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="stripe_secret_key" class="form-label">Stripe Secret Key</label>
+                                    <input type="password" class="form-control" id="stripe_secret_key" name="stripe_secret_key" 
+                                           value="{{ stripe_secret_key or '' }}"
+                                           placeholder="sk_test_...">
+                                    <div class="form-text">Your secret key starts with 'sk_test_' or 'sk_live_'</div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="default_payment_provider" name="default_payment_provider" value="stripe" {% if default_payment_provider == 'stripe' %}checked{% endif %}>
+                                        <label class="form-check-label" for="default_payment_provider">
+                                            Make Stripe the default payment provider
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                <div class="d-flex justify-content-between">
+                                    <button type="submit" class="btn btn-primary">Save Stripe Keys</button>
+                                    <a href="https://dashboard.stripe.com/apikeys" target="_blank" class="btn btn-outline-secondary">
+                                        <i class="fas fa-external-link-alt"></i> Go to Stripe Dashboard
+                                    </a>
+                                </div>
+                            </form>
+                        </div>
+                        
+                        <!-- Paystack Configuration -->
+                        <div class="tab-pane fade" id="paystack" role="tabpanel" aria-labelledby="paystack-tab">
+                            <form action="{{ url_for('settings.update_paystack_keys') }}" method="POST">
+                                <div class="mb-3">
+                                    <div class="alert alert-info">
+                                        <i class="fas fa-info-circle"></i> Paystack is a payment processor with strong presence in Africa. You will need a Paystack account to accept payments through this provider.
+                                        <a href="https://dashboard.paystack.com/#/signup" target="_blank" class="alert-link">Sign up for Paystack</a> if you don't have an account.
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="paystack_public_key" class="form-label">Paystack Public Key</label>
+                                    <input type="text" class="form-control" id="paystack_public_key" name="paystack_public_key" 
+                                           value="{{ paystack_public_key or '' }}"
+                                           placeholder="pk_test_...">
+                                    <div class="form-text">Your public key starts with 'pk_test_' or 'pk_live_'</div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="paystack_secret_key" class="form-label">Paystack Secret Key</label>
+                                    <input type="password" class="form-control" id="paystack_secret_key" name="paystack_secret_key" 
+                                           value="{{ paystack_secret_key or '' }}"
+                                           placeholder="sk_test_...">
+                                    <div class="form-text">Your secret key starts with 'sk_test_' or 'sk_live_'</div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="default_payment_provider" name="default_payment_provider" value="paystack" {% if default_payment_provider == 'paystack' %}checked{% endif %}>
+                                        <label class="form-check-label" for="default_payment_provider">
+                                            Make Paystack the default payment provider
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                <div class="d-flex justify-content-between">
+                                    <button type="submit" class="btn btn-primary">Save Paystack Keys</button>
+                                    <a href="https://dashboard.paystack.com/#/login" target="_blank" class="btn btn-outline-secondary">
+                                        <i class="fas fa-external-link-alt"></i> Go to Paystack Dashboard
+                                    </a>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card mb-4" id="business">
+                <div class="card-header">
+                    <h4>Business Information</h4>
+                </div>
+                <div class="card-body">
+                    <form action="{{ url_for('settings.update_settings') }}" method="POST">
+                        <input type="hidden" name="section" value="business">
+                        
+                        <div class="mb-3">
+                            <label for="business_name" class="form-label">Business Name</label>
+                            <input type="text" class="form-control" id="business_name" name="business_name" 
+                                   value="{{ business_info.name }}">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="business_email" class="form-label">Business Email</label>
+                            <input type="email" class="form-control" id="business_email" name="business_email" 
+                                   value="{{ business_info.email }}">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="business_phone" class="form-label">Business Phone</label>
+                            <input type="text" class="form-control" id="business_phone" name="business_phone" 
+                                   value="{{ business_info.phone }}">
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">Save Business Information</button>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h4>Receipt Setup</h4>
+                </div>
+                <div class="card-body">
+                    <p>Email receipts are automatically sent to clients after a successful transaction.</p>
+                    <p>Use the business information above to customize your receipt header.</p>
+                    
+                    <div class="alert alert-info">
+                        <i class="fas fa-envelope"></i>
+                        Email functionality must be configured in your environment settings for receipts to be sent.
+                    </div>
+                    
+                    <h5 class="mt-3">Receipt Preview</h5>
+                    <div class="card">
+                        <div class="card-body">
+                            <h4 class="text-center">{{ business_info.name }}</h4>
+                            <div class="text-center mb-3">
+                                {{ business_info.email }} | {{ business_info.phone }}
+                            </div>
+                            <hr>
+                            <div class="row">
+                                <div class="col-6">
+                                    <strong>Transaction #:</strong> 12345<br>
+                                    <strong>Date:</strong> {{ '{:%Y-%m-%d %H:%M}'.format(now) }}<br>
+                                    <strong>Client:</strong> Sample Client
+                                </div>
+                                <div class="col-6 text-end">
+                                    <strong>Amount:</strong> $75.00<br>
+                                    <strong>Payment Method:</strong> {{ default_payment_provider|default("Stripe")|title }}<br>
+                                    <strong>Points Earned:</strong> 75<br>
+                                    <strong>Points Redeemed:</strong> 0
+                                </div>
+                            </div>
+                            <hr>
+                            <div>
+                                <strong>Description:</strong> Facial Treatment
+                            </div>
+                            <hr>
+                            <div class="text-center">
+                                <small>Thank you for your business!</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

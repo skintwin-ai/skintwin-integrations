@@ -1,0 +1,104 @@
+{% extends 'base.html' %}
+
+{% block title %}AI Skill Achievements{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="mb-4">
+        <a href="{{ url_for('skill_playground.index') }}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Skills
+        </a>
+    </div>
+    
+    <h1 class="mb-4">
+        <i class="fas fa-trophy text-warning"></i> 
+        AI Skill Achievements
+    </h1>
+    
+    {% if achievements %}
+    <div class="row">
+        {% for achievement in achievements %}
+        <div class="col-md-4 mb-4">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <h5 class="card-title mb-0">
+                        <i class="fas {{ achievement.icon }} text-success"></i> 
+                        {{ achievement.name }}
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <h6 class="card-subtitle mb-2 text-muted">{{ achievement.skill.name }}</h6>
+                    <p class="card-text">{{ achievement.description }}</p>
+                    <hr>
+                    <div class="d-flex justify-content-between">
+                        <span class="badge bg-primary">{{ achievement.points }} points</span>
+                        <small class="text-muted">Achieved: {{ achievement.achieved_at.strftime('%Y-%m-%d') }}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <h5 class="card-title mb-0">Achievement Summary</h5>
+                </div>
+                <div class="card-body">
+                    <table class="table">
+                        <tr>
+                            <td><strong>Total Achievements:</strong></td>
+                            <td>{{ achievements|length }}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Total Points:</strong></td>
+                            <td>{{ achievements|sum(attribute='points') }}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Most Recent:</strong></td>
+                            <td>{% if achievements %}{{ (achievements|sort(attribute='achieved_at', reverse=True))[0].name }}{% else %}None{% endif %}</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <h5 class="card-title mb-0">Next Challenges</h5>
+                </div>
+                <div class="card-body">
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item">
+                            <i class="fas fa-flask text-info"></i> 
+                            Complete Ingredient Synergy Analyzer training
+                        </li>
+                        <li class="list-group-item">
+                            <i class="fas fa-brain text-info"></i> 
+                            Train 3 different skills to reach advanced proficiency 
+                        </li>
+                        <li class="list-group-item">
+                            <i class="fas fa-star text-info"></i> 
+                            Create a model with 95%+ accuracy
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    {% else %}
+    <div class="alert alert-info">
+        <h4 class="alert-heading">No Achievements Yet</h4>
+        <p>You haven't earned any AI skill achievements yet. Start training your AI in different skills to unlock achievements.</p>
+        <hr>
+        <p class="mb-0">
+            <a href="{{ url_for('skill_playground.index') }}" class="btn btn-primary">Explore Available Skills</a>
+        </p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

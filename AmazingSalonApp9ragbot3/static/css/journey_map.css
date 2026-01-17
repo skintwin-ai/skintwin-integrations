@@ -1,0 +1,272 @@
+/* Journey Map CSS */
+
+/* Client avatar styling */
+.client-avatar {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+/* Timeline styles */
+.journey-timeline {
+  margin: 30px 0;
+  position: relative;
+}
+
+.timeline {
+  position: relative;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.timeline::after {
+  content: '';
+  position: absolute;
+  width: 6px;
+  background-color: #e3e6f0;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  margin-left: -3px;
+  border-radius: 3px;
+}
+
+.timeline-item {
+  padding: 10px 40px;
+  position: relative;
+  width: 50%;
+  box-sizing: border-box;
+  margin-bottom: 30px;
+  animation: fadeIn 0.5s ease-in-out;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.timeline-item:hover {
+  transform: translateY(-5px);
+  cursor: pointer;
+}
+
+.timeline-item.selected {
+  transform: translateY(-5px);
+  z-index: 10;
+}
+
+.timeline-item.selected .timeline-panel {
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+  border-left: 5px solid #4e73df;
+}
+
+.timeline-item.left {
+  left: 0;
+}
+
+.timeline-item.right {
+  left: 50%;
+}
+
+.timeline-badge {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  line-height: 40px;
+  font-size: 1rem;
+  text-align: center;
+  background-color: #4e73df;
+  color: white;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px white, inset 0 0 0 3px rgba(0,0,0,0.1), 0 0 0 8px rgba(78, 115, 223, 0.1);
+  z-index: 1;
+}
+
+.left .timeline-badge {
+  right: -20px;
+}
+
+.right .timeline-badge {
+  left: -20px;
+}
+
+.timeline-panel {
+  position: relative;
+  background-color: #fff;
+  border-radius: 5px;
+  box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15);
+  padding: 15px;
+  border-left: 3px solid transparent;
+  transition: all 0.3s ease;
+}
+
+.left .timeline-panel {
+  border-left-color: #4e73df;
+}
+
+.right .timeline-panel {
+  border-left-color: #36b9cc;
+}
+
+.left .timeline-panel::after {
+  content: " ";
+  position: absolute;
+  top: 15px;
+  right: -15px;
+  border-width: 10px 0 10px 15px;
+  border-style: solid;
+  border-color: transparent transparent transparent #ffffff;
+  filter: drop-shadow(2px 0px 1px rgba(0,0,0,0.05));
+}
+
+.right .timeline-panel::after {
+  content: " ";
+  position: absolute;
+  top: 15px;
+  left: -15px;
+  border-width: 10px 15px 10px 0;
+  border-style: solid;
+  border-color: transparent #ffffff transparent transparent;
+  filter: drop-shadow(-2px 0px 1px rgba(0,0,0,0.05));
+}
+
+.timeline-title {
+  margin: 0;
+  color: #4e73df;
+}
+
+.timeline-body {
+  padding: 10px 0;
+}
+
+.timeline-footer {
+  padding-top: 10px;
+  border-top: 1px solid #e3e6f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Milestone highlight colors */
+.milestone-type-first_visit .timeline-badge {
+  background-color: #4e73df;  /* Primary blue */
+}
+
+.milestone-type-loyalty_tier .timeline-badge {
+  background-color: #1cc88a;  /* Success green */
+}
+
+.milestone-type-special_service .timeline-badge {
+  background-color: #36b9cc;  /* Info teal */
+}
+
+.milestone-type-spending_milestone .timeline-badge {
+  background-color: #f6c23e;  /* Warning yellow */
+}
+
+.milestone-type-anniversary .timeline-badge {
+  background-color: #e74a3b;  /* Danger red */
+}
+
+.milestone-type-style_change .timeline-badge {
+  background-color: #6f42c1;  /* Purple */
+}
+
+.milestone-type-custom .timeline-badge {
+  background-color: #858796;  /* Gray */
+}
+
+/* Milestone filter buttons */
+.milestone-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.milestone-filter-group .btn {
+  margin: 0 5px 5px 0;
+  font-size: 0.8rem;
+}
+
+/* Journey context section */
+.journey-context-placeholder {
+  color: #858796;
+}
+
+.selected-milestone {
+  background-color: #f8f9fc;
+  border-radius: 5px;
+  padding: 15px;
+  margin-bottom: 20px;
+  border-left: 5px solid #4e73df;
+}
+
+.milestone-icon {
+  font-size: 2rem;
+  color: #4e73df;
+  margin-right: 15px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.memory-item, .appointment-item {
+  background-color: #fff;
+  border-radius: 5px;
+  box-shadow: 0 0.15rem 0.5rem 0 rgba(58, 59, 69, 0.05);
+  padding: 15px;
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Milestone details modal */
+.milestone-header {
+  display: flex;
+  align-items: center;
+}
+
+.milestone-icon {
+  margin-right: 15px;
+}
+
+.milestone-metadata ul {
+  padding-left: 20px;
+}
+
+/* Animation */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Responsive adjustments */
+@media (max-width: 991.98px) {
+  .timeline::after {
+    left: 31px;
+  }
+  
+  .timeline-item {
+    width: 100%;
+    padding-left: 70px;
+    padding-right: 25px;
+  }
+  
+  .timeline-item.right {
+    left: 0;
+  }
+  
+  .left .timeline-badge,
+  .right .timeline-badge {
+    left: 10px;
+  }
+  
+  .left .timeline-panel::after,
+  .right .timeline-panel::after {
+    display: none;
+  }
+  
+  .milestone-filter-group {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    padding-bottom: 5px;
+  }
+  
+  .milestone-filter-group .btn {
+    flex-shrink: 0;
+  }
+}

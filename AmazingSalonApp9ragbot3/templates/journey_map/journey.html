@@ -1,0 +1,1075 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ client.name }}'s Journey Map{% endblock %}
+
+{% block styles %}
+<link rel="stylesheet" href="/static/css/journey_map.css">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <!-- Page Heading -->
+  <div class="d-sm-flex align-items-center justify-content-between mb-4">
+    <h1 class="h3 mb-0 text-gray-800">{{ client.name }}'s Journey Map</h1>
+    <a href="{{ url_for('journey_map.index') }}" class="d-none d-sm-inline-block btn btn-sm btn-secondary shadow-sm">
+      <i class="fas fa-arrow-left fa-sm text-white-50 mr-1"></i> Back to Clients
+    </a>
+  </div>
+
+  <!-- Client Overview Card -->
+  <div class="row mb-4">
+    <div class="col-lg-12">
+      <div class="card shadow mb-4">
+        <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+          <h6 class="m-0 font-weight-bold text-primary">Client Overview</h6>
+        </div>
+        <div class="card-body">
+          <div class="row">
+            <div class="col-md-3 text-center border-right">
+              <div class="client-avatar mb-3">
+                <i class="fas fa-user-circle" style="font-size: 5rem; color: #4e73df;"></i>
+              </div>
+              <h4 class="font-weight-bold">{{ client.name }}</h4>
+              <p class="text-muted">{{ client.email }}</p>
+              <p class="text-muted">{{ client.phone }}</p>
+            </div>
+            <div class="col-md-3 border-right">
+              <h5 class="text-primary mb-3">Loyalty & Engagement</h5>
+              <p><strong>Tier:</strong> <span class="badge badge-{{ 'primary' if client.tier == 'Gold' else ('info' if client.tier == 'Silver' else 'secondary') }}">{{ client.tier }}</span></p>
+              <p><strong>Points:</strong> {{ client.loyalty_points }}</p>
+              <p><strong>Total Spent:</strong> ${{ "%.2f"|format(client.total_spent) }}</p>
+              <p><strong>Client Since:</strong> {{ client.created_at.strftime('%b %d, %Y') }}</p>
+            </div>
+            <div class="col-md-3 border-right">
+              <h5 class="text-primary mb-3">Style Preferences</h5>
+              <p><strong>Hair Length:</strong> {{ client.hair_length|title }}</p>
+              <p><strong>Style:</strong> {{ client.style_preference|title }}</p>
+              <p><strong>Color:</strong> {{ client.color_preference|title }}</p>
+            </div>
+            <div class="col-md-3">
+              <h5 class="text-primary mb-3">Journey Metrics</h5>
+              <div id="journey-metrics">
+                <p><strong>Milestones:</strong> <span id="milestone-count">Loading...</span></p>
+                <p><strong>Appointments:</strong> <span id="appointment-count">Loading...</span></p>
+                <p><strong>Memories:</strong> <span id="memory-count">Loading...</span></p>
+                <p><strong>Journey Stage:</strong> <span id="journey-stage">Loading...</span></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Journey Map Visualization -->
+  <div class="row mb-4">
+    <div class="col-lg-12">
+      <div class="card shadow mb-4">
+        <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+          <h6 class="m-0 font-weight-bold text-primary">Interactive Journey Timeline</h6>
+          <div class="dropdown no-arrow">
+            <button id="addMilestoneBtn" class="btn btn-sm btn-primary shadow-sm">
+              <i class="fas fa-plus fa-sm text-white-50 mr-1"></i> Add Milestone
+            </button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="mb-4">
+            <div class="btn-group milestone-filter-group">
+              <button class="btn btn-sm btn-outline-primary active" data-filter="all">All</button>
+              <button class="btn btn-sm btn-outline-primary" data-filter="first_visit">First Visit</button>
+              <button class="btn btn-sm btn-outline-primary" data-filter="loyalty_tier">Loyalty</button>
+              <button class="btn btn-sm btn-outline-primary" data-filter="special_service">Special Services</button>
+              <button class="btn btn-sm btn-outline-primary" data-filter="spending_milestone">Spending</button>
+              <button class="btn btn-sm btn-outline-primary" data-filter="anniversary">Anniversary</button>
+              <button class="btn btn-sm btn-outline-primary" data-filter="style_change">Style Change</button>
+            </div>
+          </div>
+          
+          <div id="journey-timeline" class="journey-timeline">
+            <div class="timeline-loader text-center py-5">
+              <div class="spinner-border text-primary" role="status">
+                <span class="sr-only">Loading...</span>
+              </div>
+              <p class="mt-2">Loading journey data...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Journey Insights -->
+  <div class="row">
+    <div class="col-lg-6">
+      <div class="card shadow mb-4">
+        <div class="card-header py-3">
+          <h6 class="m-0 font-weight-bold text-primary">Spending Pattern</h6>
+        </div>
+        <div class="card-body">
+          <div class="chart-area">
+            <canvas id="spendingChart"></canvas>
+          </div>
+          <div class="mt-4 text-center small" id="spending-insights">
+            <span class="mr-2"><i class="fas fa-circle text-primary"></i> Loading insights...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card shadow mb-4">
+        <div class="card-header py-3">
+          <h6 class="m-0 font-weight-bold text-primary">Service Preferences</h6>
+        </div>
+        <div class="card-body">
+          <div class="chart-area">
+            <canvas id="servicesChart"></canvas>
+          </div>
+          <div class="mt-4 text-center small" id="service-insights">
+            <span class="mr-2"><i class="fas fa-circle text-primary"></i> Loading insights...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Milestone & Memory Connection -->
+  <div class="row">
+    <div class="col-lg-12">
+      <div class="card shadow mb-4">
+        <div class="card-header py-3">
+          <h6 class="m-0 font-weight-bold text-primary">Journey Context</h6>
+        </div>
+        <div class="card-body">
+          <div id="journey-context">
+            <div class="journey-context-placeholder text-center py-3">
+              <i class="fas fa-info-circle text-primary mb-3" style="font-size: 2rem;"></i>
+              <p>Select a milestone on the timeline to see related memories and context</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Milestone Modal -->
+<div class="modal fade" id="addMilestoneModal" tabindex="-1" role="dialog" aria-labelledby="addMilestoneModalLabel" aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="addMilestoneModalLabel">Add New Milestone</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="addMilestoneForm">
+          <div class="form-group">
+            <label for="milestoneTitle">Title</label>
+            <input type="text" class="form-control" id="milestoneTitle" required>
+          </div>
+          <div class="form-group">
+            <label for="milestoneDescription">Description</label>
+            <textarea class="form-control" id="milestoneDescription" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label for="milestoneType">Type</label>
+            <select class="form-control" id="milestoneType" required>
+              <option value="first_visit">First Visit</option>
+              <option value="loyalty_tier">Loyalty Tier</option>
+              <option value="special_service">Special Service</option>
+              <option value="spending_milestone">Spending Milestone</option>
+              <option value="anniversary">Anniversary</option>
+              <option value="style_change">Style Change</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="milestoneDate">Date</label>
+            <input type="date" class="form-control" id="milestoneDate" required>
+          </div>
+          <div class="form-group">
+            <label for="milestoneImportance">Importance (1-10)</label>
+            <input type="number" class="form-control" id="milestoneImportance" min="1" max="10" value="5">
+          </div>
+          <div class="form-group">
+            <label for="milestoneIcon">Icon</label>
+            <select class="form-control" id="milestoneIcon">
+              <option value="fas fa-star">Star</option>
+              <option value="fas fa-award">Award</option>
+              <option value="fas fa-gem">Gem</option>
+              <option value="fas fa-crown">Crown</option>
+              <option value="fas fa-gift">Gift</option>
+              <option value="fas fa-heart">Heart</option>
+              <option value="fas fa-cut">Scissors</option>
+              <option value="fas fa-calendar-alt">Calendar</option>
+              <option value="fas fa-dollar-sign">Dollar</option>
+              <option value="fas fa-smile">Smile</option>
+            </select>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="saveMilestoneBtn">Save Milestone</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Milestone Details Modal -->
+<div class="modal fade" id="milestoneDetailsModal" tabindex="-1" role="dialog" aria-labelledby="milestoneDetailsModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="milestoneDetailsModalLabel">Milestone Details</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body" id="milestoneDetailsContent">
+        <!-- Content will be dynamically generated -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-danger" id="deleteMilestoneBtn">Delete</button>
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.4/dist/Chart.min.js"></script>
+<script>
+  // Client ID from the server
+  const clientId = {{ client.id }};
+  let journeyData = null;
+  let selectedMilestoneId = null;
+  let spendingChart = null;
+  let servicesChart = null;
+  
+  // DOM Elements
+  const journeyTimeline = document.getElementById('journey-timeline');
+  const milestoneFilterBtns = document.querySelectorAll('.milestone-filter-group button');
+  const addMilestoneBtn = document.getElementById('addMilestoneBtn');
+  const addMilestoneModal = document.getElementById('addMilestoneModal');
+  const saveMilestoneBtn = document.getElementById('saveMilestoneBtn');
+  const milestoneDetailsModal = document.getElementById('milestoneDetailsModal');
+  const deleteMilestoneBtn = document.getElementById('deleteMilestoneBtn');
+  
+  // Fetch journey data
+  async function fetchJourneyData() {
+    try {
+      const response = await fetch(`/journey-map/api/milestones/${clientId}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch journey data');
+      }
+      
+      journeyData = await response.json();
+      
+      // Update metrics
+      document.getElementById('milestone-count').textContent = journeyData.milestones.length;
+      document.getElementById('appointment-count').textContent = journeyData.appointments.length;
+      document.getElementById('memory-count').textContent = journeyData.memories.length;
+      
+      // Determine journey stage based on milestones and time as client
+      const journeyStage = determineJourneyStage(journeyData);
+      document.getElementById('journey-stage').textContent = journeyStage;
+      
+      // Render journey timeline
+      renderJourneyTimeline(journeyData.milestones);
+      
+      // Initialize charts
+      initializeCharts(journeyData);
+      
+    } catch (error) {
+      console.error('Error fetching journey data:', error);
+      journeyTimeline.innerHTML = `
+        <div class="text-center py-5">
+          <i class="fas fa-exclamation-circle text-danger mb-3" style="font-size: 3rem;"></i>
+          <p>Failed to load journey data. Please try again later.</p>
+        </div>
+      `;
+    }
+  }
+  
+  // Determine journey stage based on data
+  function determineJourneyStage(data) {
+    const milestoneCount = data.milestones.length;
+    const appointmentCount = data.appointments.length;
+    const clientCreationDate = new Date(data.client.created_at);
+    const daysSinceCreation = Math.floor((new Date() - clientCreationDate) / (1000 * 60 * 60 * 24));
+    
+    if (daysSinceCreation < 30 && appointmentCount <= 2) {
+      return 'New Client';
+    } else if (data.client.tier === 'Gold' || appointmentCount > 10) {
+      return 'Loyal Client';
+    } else if (milestoneCount >= 5 || appointmentCount > 5) {
+      return 'Established Client';
+    } else {
+      return 'Developing Client';
+    }
+  }
+  
+  // Render the journey timeline
+  function renderJourneyTimeline(milestones) {
+    if (milestones.length === 0) {
+      journeyTimeline.innerHTML = `
+        <div class="text-center py-5">
+          <i class="fas fa-route text-primary mb-3" style="font-size: 3rem;"></i>
+          <p>No milestones found. Add a milestone to start building this client's journey.</p>
+        </div>
+      `;
+      return;
+    }
+    
+    // Sort milestones by date
+    milestones.sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    // Create timeline HTML
+    let timelineHTML = '<div class="timeline">';
+    
+    milestones.forEach((milestone, index) => {
+      const milestoneDate = new Date(milestone.date);
+      const formattedDate = milestoneDate.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric' 
+      });
+      
+      const position = index % 2 === 0 ? 'left' : 'right';
+      
+      timelineHTML += `
+        <div class="timeline-item ${position} milestone-type-${milestone.type}" data-milestone-id="${milestone.id}">
+          <div class="timeline-badge">
+            <i class="${milestone.icon}"></i>
+          </div>
+          <div class="timeline-panel">
+            <div class="timeline-heading">
+              <h5 class="timeline-title">${milestone.title}</h5>
+              <p class="text-muted"><small><i class="fas fa-calendar-alt mr-1"></i>${formattedDate}</small></p>
+            </div>
+            <div class="timeline-body">
+              <p>${milestone.description || 'No description available'}</p>
+            </div>
+            <div class="timeline-footer">
+              <span class="badge badge-${getImportanceBadgeClass(milestone.importance)}">
+                Importance: ${milestone.importance}/10
+              </span>
+              <button class="btn btn-sm btn-link view-details-btn" data-milestone-id="${milestone.id}">
+                View Details
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+    
+    timelineHTML += '</div>';
+    journeyTimeline.innerHTML = timelineHTML;
+    
+    // Add event listeners to the detail buttons
+    document.querySelectorAll('.view-details-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const milestoneId = this.getAttribute('data-milestone-id');
+        showMilestoneDetails(milestoneId);
+      });
+    });
+    
+    // Add event listeners for clicking on timeline items
+    document.querySelectorAll('.timeline-item').forEach(item => {
+      item.addEventListener('click', function() {
+        const milestoneId = this.getAttribute('data-milestone-id');
+        updateJourneyContext(milestoneId);
+      });
+    });
+  }
+  
+  // Get badge class based on importance value
+  function getImportanceBadgeClass(importance) {
+    if (importance >= 8) return 'danger';
+    if (importance >= 6) return 'primary';
+    if (importance >= 4) return 'info';
+    return 'secondary';
+  }
+  
+  // Show milestone details in modal
+  function showMilestoneDetails(milestoneId) {
+    const milestone = journeyData.milestones.find(m => m.id.toString() === milestoneId.toString());
+    if (!milestone) return;
+    
+    selectedMilestoneId = milestoneId;
+    
+    const milestoneDate = new Date(milestone.date);
+    const formattedDate = milestoneDate.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+    
+    // Get related data based on milestone metadata
+    const relatedData = getRelatedData(milestone);
+    
+    const modalContent = document.getElementById('milestoneDetailsContent');
+    
+    let metadataHTML = '';
+    if (milestone.metadata) {
+      metadataHTML = '<div class="milestone-metadata mt-4"><h6>Additional Information</h6><ul>';
+      
+      for (const [key, value] of Object.entries(milestone.metadata)) {
+        const formattedKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        metadataHTML += `<li><strong>${formattedKey}:</strong> ${value}</li>`;
+      }
+      
+      metadataHTML += '</ul></div>';
+    }
+    
+    modalContent.innerHTML = `
+      <div class="milestone-header mb-4">
+        <div class="row">
+          <div class="col-auto">
+            <div class="milestone-icon">
+              <i class="${milestone.icon}" style="font-size: 3rem; color: #4e73df;"></i>
+            </div>
+          </div>
+          <div class="col">
+            <h4>${milestone.title}</h4>
+            <p class="text-muted mb-1">${formattedDate}</p>
+            <div class="badge badge-${getImportanceBadgeClass(milestone.importance)} mb-2">
+              Importance: ${milestone.importance}/10
+            </div>
+            <span class="badge badge-info">${milestone.type.replace(/_/g, ' ').toUpperCase()}</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="milestone-description mb-4">
+        <h6>Description</h6>
+        <p>${milestone.description || 'No description available'}</p>
+      </div>
+      
+      ${metadataHTML}
+      
+      ${relatedData}
+    `;
+    
+    // Set up delete button
+    deleteMilestoneBtn.setAttribute('data-milestone-id', milestoneId);
+    
+    // Show the modal
+    $(milestoneDetailsModal).modal('show');
+  }
+  
+  // Get related data based on milestone type and metadata
+  function getRelatedData(milestone) {
+    let relatedHTML = '';
+    
+    // Find related memories based on date and context
+    const relatedMemories = findRelatedMemories(milestone);
+    if (relatedMemories.length > 0) {
+      relatedHTML += '<div class="related-memories mt-4"><h6>Related Memories</h6><ul class="list-group">';
+      
+      relatedMemories.forEach(memory => {
+        const memoryDate = new Date(memory.date);
+        const formattedMemoryDate = memoryDate.toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: 'short', 
+          day: 'numeric' 
+        });
+        
+        relatedHTML += `
+          <li class="list-group-item">
+            <div class="memory-content">${memory.content}</div>
+            <div class="small text-muted mt-1">
+              <span class="badge badge-secondary">${memory.type.replace(/_/g, ' ').toUpperCase()}</span>
+              <span class="ml-2">${formattedMemoryDate}</span>
+            </div>
+          </li>
+        `;
+      });
+      
+      relatedHTML += '</ul></div>';
+    }
+    
+    // Find related appointments
+    if (milestone.milestone_type === 'first_visit' || milestone.milestone_type === 'special_service') {
+      const relatedAppointments = findRelatedAppointments(milestone);
+      if (relatedAppointments.length > 0) {
+        relatedHTML += '<div class="related-appointments mt-4"><h6>Related Appointments</h6><ul class="list-group">';
+        
+        relatedAppointments.forEach(appt => {
+          const apptDate = new Date(appt.date);
+          const formattedApptDate = apptDate.toLocaleDateString('en-US', { 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+          });
+          
+          relatedHTML += `
+            <li class="list-group-item">
+              <div><strong>${appt.service}</strong></div>
+              <div class="small text-muted mt-1">
+                ${formattedApptDate} - 
+                <span class="badge badge-${appt.status === 'completed' ? 'success' : 'secondary'}">${appt.status.toUpperCase()}</span>
+              </div>
+            </li>
+          `;
+        });
+        
+        relatedHTML += '</ul></div>';
+      }
+    }
+    
+    return relatedHTML;
+  }
+  
+  // Find related memories based on milestone
+  function findRelatedMemories(milestone) {
+    if (!journeyData || !journeyData.memories) return [];
+    
+    const milestoneDate = new Date(milestone.date);
+    const milestoneType = milestone.type;
+    
+    // Find memories within 7 days of milestone
+    return journeyData.memories.filter(memory => {
+      const memoryDate = new Date(memory.date);
+      const daysDiff = Math.abs((memoryDate - milestoneDate) / (1000 * 60 * 60 * 24));
+      
+      // Related if within 7 days or has similar type
+      return daysDiff <= 7 || 
+        (milestoneType === 'first_visit' && memory.type === 'first_impression') ||
+        (milestoneType === 'style_change' && memory.type === 'style_preference') ||
+        (milestoneType === 'loyalty_tier' && memory.type === 'loyalty');
+    });
+  }
+  
+  // Find related appointments based on milestone
+  function findRelatedAppointments(milestone) {
+    if (!journeyData || !journeyData.appointments) return [];
+    
+    const milestoneDate = new Date(milestone.date);
+    
+    // Find appointments on same day as milestone
+    return journeyData.appointments.filter(appt => {
+      const apptDate = new Date(appt.date);
+      return apptDate.toDateString() === milestoneDate.toDateString();
+    });
+  }
+  
+  // Update journey context when a milestone is selected
+  function updateJourneyContext(milestoneId) {
+    const milestone = journeyData.milestones.find(m => m.id.toString() === milestoneId.toString());
+    if (!milestone) return;
+    
+    const contextElement = document.getElementById('journey-context');
+    const milestoneDate = new Date(milestone.date);
+    
+    // Highlight the selected milestone
+    document.querySelectorAll('.timeline-item').forEach(item => {
+      item.classList.remove('selected');
+      if (item.getAttribute('data-milestone-id') === milestoneId) {
+        item.classList.add('selected');
+      }
+    });
+    
+    // Get related memories and appointments
+    const relatedMemories = findRelatedMemories(milestone);
+    const relatedAppointments = findRelatedAppointments(milestone);
+    
+    let contextHTML = `
+      <div class="row">
+        <div class="col-md-12 mb-4">
+          <div class="selected-milestone">
+            <div class="milestone-header">
+              <i class="${milestone.icon} milestone-icon"></i>
+              <h5>${milestone.title}</h5>
+              <p class="text-muted">
+                ${milestoneDate.toLocaleDateString('en-US', { 
+                  year: 'numeric', 
+                  month: 'long', 
+                  day: 'numeric' 
+                })}
+              </p>
+            </div>
+            <p>${milestone.description || 'No description available'}</p>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // Add related data (memories, appointments) if available
+    if (relatedMemories.length > 0 || relatedAppointments.length > 0) {
+      contextHTML += '<div class="row">';
+      
+      if (relatedMemories.length > 0) {
+        contextHTML += `
+          <div class="col-md-${relatedAppointments.length > 0 ? '6' : '12'}">
+            <h6 class="text-primary mb-3">Related Memories</h6>
+            <div class="timeline-memories">
+        `;
+        
+        relatedMemories.forEach(memory => {
+          const memoryDate = new Date(memory.date);
+          contextHTML += `
+            <div class="memory-item mb-3">
+              <div class="memory-content">${memory.content}</div>
+              <div class="small text-muted mt-1">
+                <span class="badge badge-secondary">${memory.type.replace(/_/g, ' ').toUpperCase()}</span>
+                <span class="ml-2">${memoryDate.toLocaleDateString('en-US', { 
+                  year: 'numeric', 
+                  month: 'short', 
+                  day: 'numeric' 
+                })}</span>
+              </div>
+            </div>
+          `;
+        });
+        
+        contextHTML += '</div></div>';
+      }
+      
+      if (relatedAppointments.length > 0) {
+        contextHTML += `
+          <div class="col-md-${relatedMemories.length > 0 ? '6' : '12'}">
+            <h6 class="text-primary mb-3">Related Appointments</h6>
+            <div class="timeline-appointments">
+        `;
+        
+        relatedAppointments.forEach(appt => {
+          const apptDate = new Date(appt.date);
+          contextHTML += `
+            <div class="appointment-item mb-3">
+              <div><strong>${appt.service}</strong></div>
+              <div class="small text-muted mt-1">
+                ${apptDate.toLocaleDateString('en-US', { 
+                  year: 'numeric', 
+                  month: 'short', 
+                  day: 'numeric' 
+                })} - 
+                <span class="badge badge-${appt.status === 'completed' ? 'success' : 'secondary'}">${appt.status.toUpperCase()}</span>
+              </div>
+            </div>
+          `;
+        });
+        
+        contextHTML += '</div></div>';
+      }
+      
+      contextHTML += '</div>';
+    } else {
+      contextHTML += `
+        <div class="row">
+          <div class="col-md-12">
+            <div class="no-related-data text-center py-3">
+              <i class="fas fa-info-circle text-primary mb-3" style="font-size: 1.5rem;"></i>
+              <p>No related memories or appointments found for this milestone.</p>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+    
+    contextElement.innerHTML = contextHTML;
+  }
+  
+  // Initialize charts with journey data
+  function initializeCharts(data) {
+    // Prepare spending data
+    const spendingData = prepareSpendingData(data.transactions);
+    initializeSpendingChart(spendingData);
+    
+    // Prepare service preference data
+    const serviceData = prepareServiceData(data.appointments);
+    initializeServicesChart(serviceData);
+  }
+  
+  // Prepare spending data for chart
+  function prepareSpendingData(transactions) {
+    if (!transactions || transactions.length === 0) {
+      return { labels: [], amounts: [] };
+    }
+    
+    // Sort transactions by date
+    transactions.sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    // Group by month
+    const spendingByMonth = {};
+    transactions.forEach(transaction => {
+      const date = new Date(transaction.date);
+      const monthYear = `${date.toLocaleString('en-US', { month: 'short' })} ${date.getFullYear()}`;
+      
+      if (!spendingByMonth[monthYear]) {
+        spendingByMonth[monthYear] = 0;
+      }
+      
+      spendingByMonth[monthYear] += transaction.amount;
+    });
+    
+    // Convert to arrays for Chart.js
+    const labels = Object.keys(spendingByMonth);
+    const amounts = Object.values(spendingByMonth);
+    
+    // Update insights
+    const totalSpent = amounts.reduce((sum, amount) => sum + amount, 0);
+    const averagePerMonth = totalSpent / labels.length;
+    const lastMonthAmount = amounts[amounts.length - 1] || 0;
+    
+    const insight = `
+      <span class="mr-2"><i class="fas fa-circle text-primary"></i> Total: $${totalSpent.toFixed(2)}</span>
+      <span class="mr-2"><i class="fas fa-circle text-success"></i> Average: $${averagePerMonth.toFixed(2)}/month</span>
+      <span class="mr-2"><i class="fas fa-circle text-info"></i> Latest: $${lastMonthAmount.toFixed(2)}</span>
+    `;
+    
+    document.getElementById('spending-insights').innerHTML = insight;
+    
+    return { labels, amounts };
+  }
+  
+  // Initialize spending chart
+  function initializeSpendingChart(data) {
+    const ctx = document.getElementById('spendingChart').getContext('2d');
+    
+    if (spendingChart) {
+      spendingChart.destroy();
+    }
+    
+    spendingChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: data.labels,
+        datasets: [{
+          label: 'Spending',
+          data: data.amounts,
+          backgroundColor: 'rgba(78, 115, 223, 0.05)',
+          borderColor: 'rgba(78, 115, 223, 1)',
+          pointBackgroundColor: 'rgba(78, 115, 223, 1)',
+          pointBorderColor: '#fff',
+          pointHoverBackgroundColor: '#fff',
+          pointHoverBorderColor: 'rgba(78, 115, 223, 1)',
+          borderWidth: 2,
+          pointRadius: 3,
+          lineTension: 0.3
+        }]
+      },
+      options: {
+        maintainAspectRatio: false,
+        layout: {
+          padding: {
+            left: 10,
+            right: 25,
+            top: 25,
+            bottom: 0
+          }
+        },
+        scales: {
+          xAxes: [{
+            gridLines: {
+              display: false,
+              drawBorder: false
+            },
+            ticks: {
+              maxTicksLimit: 7
+            }
+          }],
+          yAxes: [{
+            ticks: {
+              maxTicksLimit: 5,
+              padding: 10,
+              callback: function(value) {
+                return '$' + value;
+              }
+            },
+            gridLines: {
+              color: "rgb(234, 236, 244)",
+              zeroLineColor: "rgb(234, 236, 244)",
+              drawBorder: false,
+              borderDash: [2],
+              zeroLineBorderDash: [2]
+            }
+          }]
+        },
+        legend: {
+          display: false
+        },
+        tooltips: {
+          backgroundColor: "rgb(255,255,255)",
+          bodyFontColor: "#858796",
+          titleMarginBottom: 10,
+          titleFontColor: '#6e707e',
+          titleFontSize: 14,
+          borderColor: '#dddfeb',
+          borderWidth: 1,
+          xPadding: 15,
+          yPadding: 15,
+          displayColors: false,
+          intersect: false,
+          mode: 'index',
+          caretPadding: 10,
+          callbacks: {
+            label: function(tooltipItem, chart) {
+              return 'Spent: $' + tooltipItem.yLabel.toFixed(2);
+            }
+          }
+        }
+      }
+    });
+  }
+  
+  // Prepare service data for chart
+  function prepareServiceData(appointments) {
+    if (!appointments || appointments.length === 0) {
+      return { labels: [], counts: [] };
+    }
+    
+    // Count services by type
+    const serviceCount = {};
+    appointments.forEach(appointment => {
+      if (!serviceCount[appointment.service]) {
+        serviceCount[appointment.service] = 0;
+      }
+      
+      serviceCount[appointment.service]++;
+    });
+    
+    // Sort by count
+    const sortedServices = Object.entries(serviceCount)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5); // Get top 5
+    
+    // Convert to arrays for Chart.js
+    const labels = sortedServices.map(entry => entry[0]);
+    const counts = sortedServices.map(entry => entry[1]);
+    
+    // Update insights
+    const totalAppointments = appointments.length;
+    const favoriteService = labels[0] || 'None';
+    const favoritePercent = totalAppointments > 0 
+      ? Math.round((counts[0] / totalAppointments) * 100) 
+      : 0;
+    
+    const insight = `
+      <span class="mr-2"><i class="fas fa-circle text-primary"></i> Total Services: ${totalAppointments}</span>
+      <span class="mr-2"><i class="fas fa-circle text-success"></i> Favorite: ${favoriteService} (${favoritePercent}%)</span>
+    `;
+    
+    document.getElementById('service-insights').innerHTML = insight;
+    
+    return { labels, counts };
+  }
+  
+  // Initialize services chart
+  function initializeServicesChart(data) {
+    const ctx = document.getElementById('servicesChart').getContext('2d');
+    
+    if (servicesChart) {
+      servicesChart.destroy();
+    }
+    
+    const chartColors = [
+      'rgba(78, 115, 223, 0.8)',
+      'rgba(28, 200, 138, 0.8)',
+      'rgba(54, 185, 204, 0.8)',
+      'rgba(246, 194, 62, 0.8)',
+      'rgba(231, 74, 59, 0.8)'
+    ];
+    
+    servicesChart = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: data.labels,
+        datasets: [{
+          data: data.counts,
+          backgroundColor: chartColors,
+          hoverBackgroundColor: chartColors.map(color => color.replace('0.8', '1')),
+          hoverBorderColor: "rgba(234, 236, 244, 1)",
+        }]
+      },
+      options: {
+        maintainAspectRatio: false,
+        tooltips: {
+          backgroundColor: "rgb(255,255,255)",
+          bodyFontColor: "#858796",
+          borderColor: '#dddfeb',
+          borderWidth: 1,
+          xPadding: 15,
+          yPadding: 15,
+          displayColors: false,
+          caretPadding: 10,
+        },
+        legend: {
+          display: true,
+          position: 'bottom'
+        },
+        cutoutPercentage: 70,
+      },
+    });
+  }
+  
+  // Filter milestones by type
+  function filterMilestones(type) {
+    const allItems = document.querySelectorAll('.timeline-item');
+    
+    if (type === 'all') {
+      allItems.forEach(item => {
+        item.style.display = 'block';
+      });
+    } else {
+      allItems.forEach(item => {
+        if (item.classList.contains(`milestone-type-${type}`)) {
+          item.style.display = 'block';
+        } else {
+          item.style.display = 'none';
+        }
+      });
+    }
+  }
+  
+  // Initialize filter buttons
+  function initializeFilters() {
+    milestoneFilterBtns.forEach(btn => {
+      btn.addEventListener('click', function() {
+        // Remove active class from all buttons
+        milestoneFilterBtns.forEach(b => b.classList.remove('active'));
+        
+        // Add active class to clicked button
+        this.classList.add('active');
+        
+        // Apply filter
+        const filterType = this.getAttribute('data-filter');
+        filterMilestones(filterType);
+      });
+    });
+  }
+  
+  // Initialize add milestone modal
+  function initializeAddMilestoneModal() {
+    addMilestoneBtn.addEventListener('click', function() {
+      // Set default date to today
+      document.getElementById('milestoneDate').valueAsDate = new Date();
+      
+      // Show modal
+      $(addMilestoneModal).modal('show');
+    });
+    
+    // Handle save milestone
+    saveMilestoneBtn.addEventListener('click', function() {
+      // Get form values
+      const title = document.getElementById('milestoneTitle').value;
+      const description = document.getElementById('milestoneDescription').value;
+      const type = document.getElementById('milestoneType').value;
+      const date = document.getElementById('milestoneDate').value;
+      const importance = document.getElementById('milestoneImportance').value;
+      const icon = document.getElementById('milestoneIcon').value;
+      
+      // Validate required fields
+      if (!title || !type || !date) {
+        alert('Please fill in all required fields.');
+        return;
+      }
+      
+      // Prepare data
+      const milestoneData = {
+        title,
+        description,
+        type,
+        date,
+        importance: parseInt(importance),
+        icon
+      };
+      
+      // Send to server
+      addMilestone(milestoneData);
+    });
+  }
+  
+  // Add a new milestone
+  async function addMilestone(milestoneData) {
+    try {
+      const response = await fetch(`/journey-map/api/add-milestone/${clientId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(milestoneData)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to add milestone');
+      }
+      
+      const newMilestone = await response.json();
+      
+      // Hide modal
+      $(addMilestoneModal).modal('hide');
+      
+      // Refresh data
+      fetchJourneyData();
+      
+      // Show success message
+      alert('Milestone added successfully!');
+      
+    } catch (error) {
+      console.error('Error adding milestone:', error);
+      alert('Failed to add milestone. Please try again.');
+    }
+  }
+  
+  // Initialize delete milestone functionality
+  function initializeDeleteMilestone() {
+    deleteMilestoneBtn.addEventListener('click', function() {
+      const milestoneId = this.getAttribute('data-milestone-id');
+      if (confirm('Are you sure you want to delete this milestone?')) {
+        deleteMilestone(milestoneId);
+      }
+    });
+  }
+  
+  // Delete a milestone
+  async function deleteMilestone(milestoneId) {
+    try {
+      const response = await fetch(`/journey-map/api/delete-milestone/${milestoneId}`, {
+        method: 'DELETE'
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete milestone');
+      }
+      
+      // Hide modal
+      $(milestoneDetailsModal).modal('hide');
+      
+      // Refresh data
+      fetchJourneyData();
+      
+      // Reset journey context
+      document.getElementById('journey-context').innerHTML = `
+        <div class="journey-context-placeholder text-center py-3">
+          <i class="fas fa-info-circle text-primary mb-3" style="font-size: 2rem;"></i>
+          <p>Select a milestone on the timeline to see related memories and context</p>
+        </div>
+      `;
+      
+      // Show success message
+      alert('Milestone deleted successfully!');
+      
+    } catch (error) {
+      console.error('Error deleting milestone:', error);
+      alert('Failed to delete milestone. Please try again.');
+    }
+  }
+  
+  // Initialize the page
+  function initialize() {
+    fetchJourneyData();
+    initializeFilters();
+    initializeAddMilestoneModal();
+    initializeDeleteMilestone();
+  }
+  
+  // Start the page
+  document.addEventListener('DOMContentLoaded', initialize);
+</script>
+{% endblock %}

@@ -1,0 +1,1289 @@
+### **Adapting the Amazing Salon App for Replit**
+
+Replit is a versatile online coding platform that allows you to develop, run, and host applications directly from your browser. To adapt the Amazing Salon App for Replit, we'll adjust the previously provided code examples to fit Replit's environment, ensuring seamless deployment and testing. Below are the adapted code snippets and step-by-step instructions for each section.
+
+---
+
+## **1. Appointment Scheduling (Team 1)**
+**Languages/Frameworks:**  
+- **Frontend:** React.js  
+- **Backend:** Node.js with Express.js  
+- **Database:** Replit DB (for simplicity) or an external PostgreSQL service like [Supabase](https://supabase.com/)  
+
+### **Setting Up the Backend**
+
+1. **Create a New Repl:**
+   - Go to [Replit](https://replit.com/) and create a new Repl using the **Node.js** template.
+
+2. **Install Dependencies:**
+   - In the Repl's shell, install necessary packages:
+     ```bash
+     npm install express cors axios
+     ```
+
+3. **Set Up Replit DB (Optional):**
+   - For simplicity, we'll use Replit's built-in database. If you prefer PostgreSQL, consider using Supabase and connect via its API.
+
+4. **Create the Server:**
+   - **`index.js`**
+     ```javascript
+     const express = require('express');
+     const cors = require('cors');
+     const app = express();
+     const PORT = process.env.PORT || 3000;
+
+     // Use Replit DB or external database here
+     const Database = require("@replit/database");
+     const db = new Database();
+
+     app.use(cors());
+     app.use(express.json());
+
+     // Routes
+     app.post('/api/appointments', async (req, res) => {
+       const { stylist, service, date, time } = req.body;
+       const appointment = { stylist, service, date, time, id: Date.now() };
+       await db.set(`appointment_${appointment.id}`, appointment);
+       res.status(201).json(appointment);
+     });
+
+     app.get('/api/appointments', async (req, res) => {
+       const keys = await db.list();
+       const appointments = [];
+       for (const key of keys) {
+         if (key.startsWith("appointment_")) {
+           const appointment = await db.get(key);
+           appointments.push(appointment);
+         }
+       }
+       res.json(appointments);
+     });
+
+     app.listen(PORT, () => {
+       console.log(`Server is running on port ${PORT}`);
+     });
+     ```
+
+5. **Run the Server:**
+   - Click the **Run** button in Replit. The server will start, and Replit will provide a URL to access it.
+
+### **Setting Up the Frontend**
+
+1. **Create a New Repl:**
+   - Create another Repl using the **Create React App** template or **React** template.
+
+2. **Install Dependencies:**
+   - In the Repl's shell, install Axios:
+     ```bash
+     npm install axios
+     ```
+
+3. **Create the Booking Form Component:**
+   - **`src/components/BookingForm.jsx`**
+     ```jsx
+     import React, { useState, useEffect } from 'react';
+     import axios from 'axios';
+
+     const BookingForm = () => {
+       const [stylists, setStylists] = useState([]);
+       const [services, setServices] = useState([]);
+       const [formData, setFormData] = useState({
+         stylist: '',
+         service: '',
+         date: '',
+         time: ''
+       });
+
+       useEffect(() => {
+         // Fetch stylists and services from the backend
+         // For demonstration, we'll use static data
+         setStylists([
+           { id: 1, name: 'Alice' },
+           { id: 2, name: 'Bob' }
+         ]);
+         setServices([
+           { id: 1, name: 'Haircut' },
+           { id: 2, name: 'Coloring' }
+         ]);
+       }, []);
+
+       const handleChange = (e) => {
+         setFormData({ ...formData, [e.target.name]: e.target.value });
+       };
+
+       const handleSubmit = (e) => {
+         e.preventDefault();
+         axios.post('https://YOUR_BACKEND_URL/api/appointments', formData)
+           .then(response => alert('Appointment booked successfully!'))
+           .catch(error => console.error(error));
+       };
+
+       return (
+         <form onSubmit={handleSubmit}>
+           <select name="stylist" value={formData.stylist} onChange={handleChange} required>
+             <option value="">Select Stylist</option>
+             {stylists.map(stylist => (
+               <option key={stylist.id} value={stylist.id}>{stylist.name}</option>
+             ))}
+           </select>
+
+           <select name="service" value={formData.service} onChange={handleChange} required>
+             <option value="">Select Service</option>
+             {services.map(service => (
+               <option key={service.id} value={service.id}>{service.name}</option>
+             ))}
+           </select>
+
+           <input type="date" name="date" value={formData.date} onChange={handleChange} required />
+           <input type="time" name="time" value={formData.time} onChange={handleChange} required />
+           <button type="submit">Book Appointment</button>
+         </form>
+       );
+     };
+
+     export default BookingForm;
+     ```
+
+4. **Update the App Component:**
+   - **`src/App.js`**
+     ```jsx
+     import React from 'react';
+     import BookingForm from './components/BookingForm';
+
+     function App() {
+       return (
+         <div className="App">
+           <h1>Amazing Salon App</h1>
+           <BookingForm />
+         </div>
+       );
+     }
+
+     export default App;
+     ```
+
+5. **Configure CORS:**
+   - Ensure your backend server allows requests from your React frontend's URL. Update the CORS settings in your backend if necessary.
+
+6. **Run the Frontend:**
+   - Click the **Run** button in Replit. The React app will start, and Replit will provide a URL to access it.
+
+---
+
+## **2. Client Management (Team 2)**
+**Languages/Frameworks:**  
+- **Backend:** Node.js with Express.js  
+- **Database:** Replit DB or Supabase
+
+### **Backend Setup**
+
+1. **Extend the Existing Backend Repl:**
+   - If using the same Repl as Appointment Scheduling, add new routes.
+
+2. **Install Additional Dependencies:**
+   ```bash
+   npm install bcrypt jsonwebtoken
+   ```
+
+3. **Create Client Routes:**
+   - **`routes/clients.js`**
+     ```javascript
+     const express = require('express');
+     const router = express.Router();
+     const db = require('@replit/database')();
+     const bcrypt = require('bcrypt');
+     const jwt = require('jsonwebtoken');
+
+     // Create Client
+     router.post('/', async (req, res) => {
+       const { name, email, phone, preferences, payment_method } = req.body;
+       const client = { name, email, phone, preferences, payment_method, id: Date.now() };
+       try {
+         await db.set(`client_${client.id}`, client);
+         res.status(201).json(client);
+       } catch (error) {
+         console.error(error);
+         res.status(500).send('Server Error');
+       }
+     });
+
+     // Get Client by ID
+     router.get('/:id', async (req, res) => {
+       const { id } = req.params;
+       try {
+         const client = await db.get(`client_${id}`);
+         if (!client) return res.status(404).send('Client not found');
+         res.json(client);
+       } catch (error) {
+         console.error(error);
+         res.status(500).send('Server Error');
+       }
+     });
+
+     module.exports = router;
+     ```
+
+4. **Integrate Client Routes into Server:**
+   - **`index.js`**
+     ```javascript
+     // ... existing code
+
+     const clients = require('./routes/clients');
+     app.use('/api/clients', clients);
+
+     // ... existing code
+     ```
+
+5. **Run the Server:**
+   - Ensure all routes are functioning by testing via Replit's console or Postman.
+
+---
+
+## **3. Inventory Management (Team 3)**
+**Languages/Frameworks:**  
+- **Backend:** Python with Flask  
+- **Database:** Replit DB or Supabase
+
+### **Setting Up the Backend**
+
+1. **Create a New Repl:**
+   - Choose the **Python** template.
+
+2. **Install Dependencies:**
+   - Use the **Packages** tab in Replit to install Flask and other necessary packages:
+     ```
+     flask
+     flask-cors
+     ```
+
+3. **Create the Inventory Server:**
+   - **`main.py`**
+     ```python
+     from flask import Flask, request, jsonify
+     from flask_cors import CORS
+     import os
+     import time
+
+     app = Flask(__name__)
+     CORS(app)
+
+     # Simple in-memory inventory using a dictionary
+     inventory = {}
+
+     @app.route('/api/products', methods=['POST'])
+     def add_product():
+         data = request.json
+         product_id = int(time.time())
+         inventory[product_id] = {
+             'id': product_id,
+             'name': data['name'],
+             'barcode': data['barcode'],
+             'quantity': data['quantity'],
+             'reorder_threshold': data['reorder_threshold'],
+             'supplier': data['supplier']
+         }
+         return jsonify(inventory[product_id]), 201
+
+     @app.route('/api/products', methods=['GET'])
+     def get_products():
+         return jsonify(list(inventory.values()))
+
+     if __name__ == '__main__':
+         app.run(host='0.0.0.0', port=3000)
+     ```
+
+4. **Run the Server:**
+   - Click the **Run** button. The Flask server will start, and Replit will provide a URL.
+
+### **Frontend Integration (Optional)**
+- You can integrate the inventory management with the frontend by creating corresponding React components and using Axios to communicate with the Flask API.
+
+---
+
+## **4. Point-of-Sale System (Team 4)**
+**Languages/Frameworks:**  
+- **Frontend:** React.js  
+- **Backend:** Node.js with Express.js  
+- **Payment Integration:** Stripe API  
+
+### **Backend Setup**
+
+1. **Extend the Existing Backend Repl or Create a New One:**
+   - If extending, ensure you have added the necessary routes.
+
+2. **Install Stripe:**
+   ```bash
+   npm install stripe
+   ```
+
+3. **Create Payment Routes:**
+   - **`routes/payments.js`**
+     ```javascript
+     const express = require('express');
+     const router = express.Router();
+     const Stripe = require('stripe');
+     const stripe = Stripe('YOUR_STRIPE_SECRET_KEY');
+
+     router.post('/', async (req, res) => {
+       const { amount, payment_method_id } = req.body;
+       try {
+         const paymentIntent = await stripe.paymentIntents.create({
+           amount: amount * 100, // convert to cents
+           currency: 'usd',
+           payment_method: payment_method_id,
+           confirm: true,
+         });
+         res.status(200).json({ success: true, paymentIntent });
+       } catch (error) {
+         console.error(error);
+         res.status(400).json({ success: false, error: error.message });
+       }
+     });
+
+     module.exports = router;
+     ```
+
+4. **Integrate Payment Routes into Server:**
+   - **`index.js`**
+     ```javascript
+     // ... existing code
+
+     const payments = require('./routes/payments');
+     app.use('/api/payments', payments);
+
+     // ... existing code
+     ```
+
+5. **Set Up Stripe on Replit:**
+   - Use Replit's **Secrets** (Environment Variables) to securely store your Stripe API keys:
+     - Click on the **lock** icon on the left sidebar.
+     - Add a new secret with the key `STRIPE_SECRET_KEY` and your secret key as the value.
+   - Update your payment route to use the secret:
+     ```javascript
+     const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+     ```
+
+6. **Run the Server:**
+   - Ensure Stripe routes are functioning by testing via Replit's console or Postman.
+
+### **Frontend Setup**
+
+1. **Create or Extend the React Frontend Repl:**
+
+2. **Install Stripe Dependencies:**
+   ```bash
+   npm install @stripe/react-stripe-js @stripe/stripe-js axios
+   ```
+
+3. **Create the Payment Form Component:**
+   - **`src/components/PaymentForm.jsx`**
+     ```jsx
+     import React, { useState } from 'react';
+     import { CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
+     import axios from 'axios';
+
+     const PaymentForm = () => {
+       const stripe = useStripe();
+       const elements = useElements();
+       const [amount, setAmount] = useState('');
+
+       const handleSubmit = async (e) => {
+         e.preventDefault();
+         if (!stripe || !elements) return;
+
+         const card = elements.getElement(CardElement);
+         const { error, paymentMethod } = await stripe.createPaymentMethod({
+           type: 'card',
+           card,
+         });
+
+         if (error) {
+           console.error(error);
+           alert(error.message);
+         } else {
+           try {
+             const response = await axios.post('https://YOUR_BACKEND_URL/api/payments', {
+               amount,
+               payment_method_id: paymentMethod.id
+             });
+             if (response.data.success) {
+               alert('Payment Successful!');
+             } else {
+               alert('Payment Failed: ' + response.data.error);
+             }
+           } catch (err) {
+             console.error(err);
+             alert('Payment Error');
+           }
+         }
+       };
+
+       return (
+         <form onSubmit={handleSubmit}>
+           <input
+             type="number"
+             placeholder="Amount"
+             value={amount}
+             onChange={(e) => setAmount(e.target.value)}
+             required
+           />
+           <CardElement />
+           <button type="submit" disabled={!stripe}>
+             Pay
+           </button>
+         </form>
+       );
+     };
+
+     export default PaymentForm;
+     ```
+
+4. **Configure Stripe Provider:**
+   - **`src/App.js`**
+     ```jsx
+     import React from 'react';
+     import { loadStripe } from '@stripe/stripe-js';
+     import { Elements } from '@stripe/react-stripe-js';
+     import PaymentForm from './components/PaymentForm';
+
+     const stripePromise = loadStripe('YOUR_STRIPE_PUBLISHABLE_KEY');
+
+     function App() {
+       return (
+         <Elements stripe={stripePromise}>
+           <div className="App">
+             <h1>Point-of-Sale</h1>
+             <PaymentForm />
+           </div>
+         </Elements>
+       );
+     }
+
+     export default App;
+     ```
+
+5. **Run the Frontend:**
+   - Click the **Run** button. The React app will start, and Replit will provide a URL to access it.
+
+---
+
+## **5. Staff Management (Team 5)**
+**Languages/Frameworks:**  
+- **Backend:** Node.js with Express.js  
+- **Database:** Replit DB or Supabase  
+
+### **Backend Setup**
+
+1. **Extend the Existing Backend Repl or Create a New One:**
+
+2. **Create Staff Routes:**
+   - **`routes/staff.js`**
+     ```javascript
+     const express = require('express');
+     const router = express.Router();
+     const db = require('@replit/database')();
+
+     // Get Staff Schedule
+     router.get('/:id/schedule', async (req, res) => {
+       const { id } = req.params;
+       try {
+         const schedule = await db.get(`schedule_${id}`);
+         res.json(schedule || []);
+       } catch (error) {
+         console.error(error);
+         res.status(500).send('Server Error');
+       }
+     });
+
+     // Update Staff Availability
+     router.put('/:id/availability', async (req, res) => {
+       const { id } = req.params;
+       const { availability } = req.body; // Assume availability is a JSON array
+       try {
+         await db.set(`availability_${id}`, availability);
+         res.send('Availability updated');
+       } catch (error) {
+         console.error(error);
+         res.status(500).send('Server Error');
+       }
+     });
+
+     module.exports = router;
+     ```
+
+3. **Integrate Staff Routes into Server:**
+   - **`index.js`**
+     ```javascript
+     // ... existing code
+
+     const staff = require('./routes/staff');
+     app.use('/api/staff', staff);
+
+     // ... existing code
+     ```
+
+4. **Run the Server:**
+   - Ensure staff routes are functioning by testing via Replit's console or Postman.
+
+### **Frontend Integration (Optional)**
+- Create React components to view and update staff schedules by interacting with the `/api/staff` endpoints.
+
+---
+
+## **6. Reporting & Analytics (Team 6)**
+**Languages/Frameworks:**  
+- **Backend:** Python with Flask  
+- **Frontend:** React.js with Chart.js  
+- **Database:** Replit DB or Supabase  
+
+### **Backend Setup**
+
+1. **Extend the Flask Backend or Create a New Repl:**
+
+2. **Create Reporting Routes:**
+   - **`reports.py`**
+     ```python
+     from flask import Flask, request, jsonify
+     from flask_cors import CORS
+     import os
+     from collections import defaultdict
+
+     app = Flask(__name__)
+     CORS(app)
+
+     # Mock data for appointments
+     appointments = [
+         {'id': 1, 'service': 'Haircut', 'price': 50, 'date': '2024-01-15'},
+         {'id': 2, 'service': 'Coloring', 'price': 80, 'date': '2024-01-16'},
+         # Add more mock data as needed
+     ]
+
+     @app.route('/api/reports/revenue', methods=['GET'])
+     def revenue_report():
+         start = request.args.get('start')
+         end = request.args.get('end')
+         total = sum(app['price'] for app in appointments if start <= app['date'] <= end)
+         return jsonify({'total': total})
+
+     @app.route('/api/reports/popular-services', methods=['GET'])
+     def popular_services():
+         service_count = defaultdict(int)
+         for app in appointments:
+             service_count[app['service']] += 1
+         sorted_services = sorted(service_count.items(), key=lambda x: x[1], reverse=True)
+         return jsonify(sorted_services)
+
+     if __name__ == '__main__':
+         app.run(host='0.0.0.0', port=3000)
+     ```
+
+3. **Run the Server:**
+   - Click the **Run** button. The Flask server will start, and Replit will provide a URL.
+
+### **Frontend Setup**
+
+1. **Create or Extend the React Frontend Repl:**
+
+2. **Install Chart.js and Axios:**
+   ```bash
+   npm install chart.js react-chartjs-2 axios
+   ```
+
+3. **Create the Revenue Dashboard Component:**
+   - **`src/components/RevenueDashboard.jsx`**
+     ```jsx
+     import React, { useEffect, useState } from 'react';
+     import axios from 'axios';
+     import { Bar } from 'react-chartjs-2';
+     import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
+
+     ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
+
+     const RevenueDashboard = () => {
+       const [data, setData] = useState({ labels: [], datasets: [] });
+
+       useEffect(() => {
+         axios.get('https://YOUR_BACKEND_URL/api/reports/revenue?start=2024-01-01&end=2024-12-31')
+           .then(response => {
+             setData({
+               labels: ['Total Revenue'],
+               datasets: [{
+                 label: 'Revenue',
+                 data: [response.data.total],
+                 backgroundColor: 'rgba(75, 192, 192, 0.6)'
+               }]
+             });
+           })
+           .catch(error => console.error(error));
+       }, []);
+
+       return (
+         <div>
+           <h2>Revenue Report</h2>
+           <Bar data={data} />
+         </div>
+       );
+     };
+
+     export default RevenueDashboard;
+     ```
+
+4. **Integrate the Dashboard into App:**
+   - **`src/App.js`**
+     ```jsx
+     import React from 'react';
+     import RevenueDashboard from './components/RevenueDashboard';
+
+     function App() {
+       return (
+         <div className="App">
+           <h1>Amazing Salon App</h1>
+           <RevenueDashboard />
+         </div>
+       );
+     }
+
+     export default App;
+     ```
+
+5. **Run the Frontend:**
+   - Click the **Run** button. The React app will start, and Replit will provide a URL to access it.
+
+---
+
+## **7. Marketing Tools (Team 7)**
+**Languages/Frameworks:**  
+- **Backend:** Node.js with Express.js  
+- **Services:** SendGrid for Emails, Twilio for SMS  
+- **Database:** Replit DB or Supabase  
+
+### **Backend Setup**
+
+1. **Extend the Existing Backend Repl or Create a New One:**
+
+2. **Install Dependencies:**
+   ```bash
+   npm install @sendgrid/mail twilio
+   ```
+
+3. **Set Up Environment Variables:**
+   - Use Replit's **Secrets** to store API keys securely:
+     - `SENDGRID_API_KEY`
+     - `TWILIO_ACCOUNT_SID`
+     - `TWILIO_AUTH_TOKEN`
+     - `TWILIO_PHONE_NUMBER`
+
+4. **Create Marketing Routes:**
+   - **`routes/marketing.js`**
+     ```javascript
+     const express = require('express');
+     const router = express.Router();
+     const sendGrid = require('@sendgrid/mail');
+     const twilio = require('twilio');
+
+     sendGrid.setApiKey(process.env.SENDGRID_API_KEY);
+     const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+     // Send Promotional Email
+     router.post('/email', async (req, res) => {
+       const { to, subject, message } = req.body;
+       const msg = {
+         to,
+         from: 'promo@amazing-salon.com',
+         subject,
+         text: message,
+       };
+       try {
+         await sendGrid.send(msg);
+         res.send('Email sent');
+       } catch (error) {
+         console.error(error);
+         res.status(500).send('Email failed');
+       }
+     });
+
+     // Send Promotional SMS
+     router.post('/sms', async (req, res) => {
+       const { to, message } = req.body;
+       try {
+         await twilioClient.messages.create({
+           body: message,
+           from: process.env.TWILIO_PHONE_NUMBER,
+           to
+         });
+         res.send('SMS sent');
+       } catch (error) {
+         console.error(error);
+         res.status(500).send('SMS failed');
+       }
+     });
+
+     module.exports = router;
+     ```
+
+5. **Integrate Marketing Routes into Server:**
+   - **`index.js`**
+     ```javascript
+     // ... existing code
+
+     const marketing = require('./routes/marketing');
+     app.use('/api/marketing', marketing);
+
+     // ... existing code
+     ```
+
+6. **Run the Server:**
+   - Ensure marketing routes are functioning by testing via Replit's console or Postman.
+
+### **Frontend Integration (Optional)**
+- Create React components to send promotional emails and SMS by interacting with the `/api/marketing` endpoints.
+
+---
+
+## **8. Mobile App Compatibility (Team 8)**
+**Languages/Frameworks:**  
+- **Mobile Development:** React Native  
+- **Backend:** Same as Appointment Scheduling  
+
+### **Setting Up React Native on Replit**
+
+Replit has limited support for mobile development frameworks like React Native. However, you can develop the code on Replit and use tools like [Expo Snack](https://snack.expo.dev/) for testing.
+
+### **Developing with Expo Snack**
+
+1. **Use Expo Snack:**
+   - Visit [Expo Snack](https://snack.expo.dev/) to create and test your React Native app in the browser.
+
+2. **Create the Appointment Booking Screen:**
+   - **App.js**
+     ```jsx
+     import React, { useState, useEffect } from 'react';
+     import { View, Text, Picker, Button, TextInput, Alert, StyleSheet } from 'react-native';
+     import axios from 'axios';
+
+     const App = () => {
+       const [stylists, setStylists] = useState([]);
+       const [services, setServices] = useState([]);
+       const [formData, setFormData] = useState({
+         stylist: '',
+         service: '',
+         date: '',
+         time: ''
+       });
+
+       useEffect(() => {
+         // Fetch stylists and services from the backend
+         axios.get('https://YOUR_BACKEND_URL/api/stylists').then(response => setStylists(response.data));
+         axios.get('https://YOUR_BACKEND_URL/api/services').then(response => setServices(response.data));
+       }, []);
+
+       const handleChange = (name, value) => {
+         setFormData({ ...formData, [name]: value });
+       };
+
+       const handleSubmit = () => {
+         axios.post('https://YOUR_BACKEND_URL/api/appointments', formData)
+           .then(response => Alert.alert('Success', 'Appointment booked!'))
+           .catch(error => console.error(error));
+       };
+
+       return (
+         <View style={styles.container}>
+           <Text>Select Stylist:</Text>
+           <Picker
+             selectedValue={formData.stylist}
+             onValueChange={(itemValue) => handleChange('stylist', itemValue)}
+           >
+             <Picker.Item label="Select Stylist" value="" />
+             {stylists.map(stylist => (
+               <Picker.Item key={stylist.id} label={stylist.name} value={stylist.id} />
+             ))}
+           </Picker>
+
+           <Text>Select Service:</Text>
+           <Picker
+             selectedValue={formData.service}
+             onValueChange={(itemValue) => handleChange('service', itemValue)}
+           >
+             <Picker.Item label="Select Service" value="" />
+             {services.map(service => (
+               <Picker.Item key={service.id} label={service.name} value={service.id} />
+             ))}
+           </Picker>
+
+           <TextInput
+             style={styles.input}
+             placeholder="Date (YYYY-MM-DD)"
+             value={formData.date}
+             onChangeText={(text) => handleChange('date', text)}
+           />
+           <TextInput
+             style={styles.input}
+             placeholder="Time (HH:MM)"
+             value={formData.time}
+             onChangeText={(text) => handleChange('time', text)}
+           />
+           <Button title="Book Appointment" onPress={handleSubmit} />
+         </View>
+       );
+     };
+
+     const styles = StyleSheet.create({
+       container: {
+         padding: 20
+       },
+       input: {
+         height: 40,
+         borderColor: 'gray',
+         borderWidth: 1,
+         marginBottom: 10,
+         padding: 5
+       }
+     });
+
+     export default App;
+     ```
+
+3. **Test the App:**
+   - Use Expo Snack's preview to test the mobile app functionalities.
+
+---
+
+## **9. Security & Data Protection (Team 9)**
+**Languages/Frameworks:**  
+- **Backend:** Node.js with Express.js  
+- **Security Libraries:** Helmet, bcrypt, jsonwebtoken  
+- **Database:** Replit DB or Supabase  
+
+### **Backend Setup**
+
+1. **Extend the Existing Backend Repl or Create a New One:**
+
+2. **Install Security Dependencies:**
+   ```bash
+   npm install helmet bcrypt jsonwebtoken express-rate-limit
+   ```
+
+3. **Update Server with Security Middleware:**
+   - **`index.js`**
+     ```javascript
+     const express = require('express');
+     const helmet = require('helmet');
+     const cors = require('cors');
+     const rateLimit = require('express-rate-limit');
+     const app = express();
+     const PORT = process.env.PORT || 3000;
+
+     // Initialize Replit DB
+     const db = require('@replit/database')();
+
+     // Middleware
+     app.use(helmet()); // Set security headers
+     app.use(cors()); // Enable CORS
+     app.use(express.json());
+
+     // Rate Limiting
+     const limiter = rateLimit({
+       windowMs: 15 * 60 * 1000, // 15 minutes
+       max: 100 // limit each IP to 100 requests per windowMs
+     });
+     app.use(limiter);
+
+     // Routes
+     const appointments = require('./routes/appointments');
+     const clients = require('./routes/clients');
+     const payments = require('./routes/payments');
+     const marketing = require('./routes/marketing');
+     const staff = require('./routes/staff');
+     const auth = require('./routes/auth');
+
+     app.use('/api/appointments', appointments);
+     app.use('/api/clients', clients);
+     app.use('/api/payments', payments);
+     app.use('/api/marketing', marketing);
+     app.use('/api/staff', staff);
+     app.use('/api/auth', auth);
+
+     // Error Handling
+     app.use((err, req, res, next) => {
+       console.error(err.stack);
+       res.status(500).send('Something broke!');
+     });
+
+     app.listen(PORT, () => {
+       console.log(`Server is running on port ${PORT}`);
+     });
+     ```
+
+4. **Create Authentication Routes:**
+   - **`routes/auth.js`**
+     ```javascript
+     const express = require('express');
+     const router = express.Router();
+     const bcrypt = require('bcrypt');
+     const jwt = require('jsonwebtoken');
+     const db = require('@replit/database')();
+
+     // User Registration (Optional)
+     router.post('/register', async (req, res) => {
+       const { email, password, role } = req.body;
+       try {
+         // Check if user exists
+         const keys = await db.list();
+         const userExists = keys.some(key => key === `user_${email}`);
+         if (userExists) return res.status(400).send('User already exists');
+
+         // Hash password
+         const hashedPassword = await bcrypt.hash(password, 10);
+         const user = { email, password: hashedPassword, role };
+         await db.set(`user_${email}`, user);
+         res.status(201).send('User registered');
+       } catch (error) {
+         console.error(error);
+         res.status(500).send('Server Error');
+       }
+     });
+
+     // User Login
+     router.post('/login', async (req, res) => {
+       const { email, password } = req.body;
+       try {
+         const user = await db.get(`user_${email}`);
+         if (!user) return res.status(400).send('Invalid Credentials');
+
+         const validPassword = await bcrypt.compare(password, user.password);
+         if (!validPassword) return res.status(400).send('Invalid Credentials');
+
+         const token = jwt.sign({ email: user.email, role: user.role }, 'your_jwt_secret', { expiresIn: '1h' });
+         res.json({ token });
+       } catch (error) {
+         console.error(error);
+         res.status(500).send('Server Error');
+       }
+     });
+
+     module.exports = router;
+     ```
+
+5. **Protect Routes with Authentication Middleware:**
+   - **`middleware/auth.js`**
+     ```javascript
+     const jwt = require('jsonwebtoken');
+
+     const auth = (req, res, next) => {
+       const token = req.header('Authorization')?.split(' ')[1];
+       if (!token) return res.status(401).send('Access Denied');
+
+       try {
+         const verified = jwt.verify(token, 'your_jwt_secret');
+         req.user = verified;
+         next();
+       } catch (err) {
+         res.status(400).send('Invalid Token');
+       }
+     };
+
+     module.exports = auth;
+     ```
+
+   - **Apply Middleware to Protected Routes:**
+     - Example for Client Routes:
+       ```javascript
+       const auth = require('../middleware/auth');
+
+       // Protected Route
+       router.post('/', auth, async (req, res) => {
+         // ... existing code
+       });
+       ```
+
+6. **Run the Server:**
+   - Ensure all security features are functioning by testing via Replit's console or Postman.
+
+---
+
+## **10. Customization Options (Team 10)**
+**Languages/Frameworks:**  
+- **Frontend:** React.js  
+- **Backend:** Node.js with Express.js  
+- **Theming:** CSS Variables  
+- **Database:** Replit DB or Supabase  
+
+### **Frontend Setup**
+
+1. **Extend the Existing React Frontend Repl:**
+
+2. **Implement Theming with CSS Variables:**
+   - **`src/App.css`**
+     ```css
+     :root {
+       --background-color: #ffffff;
+       --text-color: #000000;
+       --primary-color: #6200ee;
+     }
+
+     [data-theme="dark"] {
+       --background-color: #2c2c2c;
+       --text-color: #ffffff;
+       --primary-color: #bb86fc;
+     }
+
+     body {
+       background-color: var(--background-color);
+       color: var(--text-color);
+       transition: all 0.3s ease;
+     }
+
+     .button {
+       background-color: var(--primary-color);
+       color: var(--text-color);
+       padding: 10px 20px;
+       border: none;
+       cursor: pointer;
+     }
+     ```
+
+3. **Create Theme Toggle Component:**
+   - **`src/components/ThemeToggle.jsx`**
+     ```jsx
+     import React, { useState, useEffect } from 'react';
+
+     const ThemeToggle = () => {
+       const [theme, setTheme] = useState('light');
+
+       useEffect(() => {
+         document.documentElement.setAttribute('data-theme', theme);
+       }, [theme]);
+
+       const toggleTheme = () => {
+         setTheme(prevTheme => (prevTheme === 'light' ? 'dark' : 'light'));
+       };
+
+       return (
+         <button className="button" onClick={toggleTheme}>
+           Switch to {theme === 'light' ? 'Dark' : 'Light'} Theme
+         </button>
+       );
+     };
+
+     export default ThemeToggle;
+     ```
+
+4. **Integrate Theme Toggle into App:**
+   - **`src/App.js`**
+     ```jsx
+     import React from 'react';
+     import ThemeToggle from './components/ThemeToggle';
+     import BookingForm from './components/BookingForm';
+     import RevenueDashboard from './components/RevenueDashboard';
+     // Import other components as needed
+
+     function App() {
+       return (
+         <div className="App">
+           <h1>Amazing Salon App</h1>
+           <ThemeToggle />
+           <BookingForm />
+           <RevenueDashboard />
+           {/* Add other components */}
+         </div>
+       );
+     }
+
+     export default App;
+     ```
+
+### **Backend Setup for Feature Toggles**
+
+1. **Create Feature Routes:**
+   - **`routes/features.js`**
+     ```javascript
+     const express = require('express');
+     const router = express.Router();
+     const db = require('@replit/database')();
+     const auth = require('../middleware/auth');
+
+     // Get Feature Toggles
+     router.get('/', auth, async (req, res) => {
+       try {
+         const keys = await db.list();
+         const toggles = {};
+         for (const key of keys) {
+           if (key.startsWith("feature_")) {
+             const feature = key.split("feature_")[1];
+             toggles[feature] = await db.get(key);
+           }
+         }
+         res.json(toggles);
+       } catch (error) {
+         console.error(error);
+         res.status(500).send('Server Error');
+       }
+     });
+
+     // Update Feature Toggles
+     router.put('/:feature', auth, async (req, res) => {
+       const { feature } = req.params;
+       const { enabled } = req.body;
+       try {
+         await db.set(`feature_${feature}`, enabled);
+         res.send('Feature toggle updated');
+       } catch (error) {
+         console.error(error);
+         res.status(500).send('Server Error');
+       }
+     });
+
+     module.exports = router;
+     ```
+
+2. **Integrate Feature Routes into Server:**
+   - **`index.js`**
+     ```javascript
+     // ... existing code
+
+     const features = require('./routes/features');
+     app.use('/api/features', features);
+
+     // ... existing code
+     ```
+
+3. **Run the Server:**
+   - Ensure feature toggle routes are functioning by testing via Replit's console or Postman.
+
+### **Frontend Integration**
+
+1. **Fetch and Apply Feature Toggles:**
+   - **`src/App.js`**
+     ```jsx
+     import React, { useEffect, useState } from 'react';
+     import axios from 'axios';
+     import ThemeToggle from './components/ThemeToggle';
+     import BookingForm from './components/BookingForm';
+     import RevenueDashboard from './components/RevenueDashboard';
+     // Import other components as needed
+
+     function App() {
+       const [features, setFeatures] = useState({});
+
+       useEffect(() => {
+         // Fetch feature toggles from the backend
+         axios.get('https://YOUR_BACKEND_URL/api/features', {
+           headers: {
+             'Authorization': `Bearer YOUR_JWT_TOKEN`
+           }
+         })
+           .then(response => setFeatures(response.data))
+           .catch(error => console.error(error));
+       }, []);
+
+       return (
+         <div className="App">
+           <h1>Amazing Salon App</h1>
+           <ThemeToggle />
+           {features.booking && <BookingForm />}
+           {features.revenue && <RevenueDashboard />}
+           {/* Conditionally render other components based on feature toggles */}
+         </div>
+       );
+     }
+
+     export default App;
+     ```
+
+2. **Run the Frontend:**
+   - Click the **Run** button. The React app will start, applying feature toggles as configured.
+
+---
+
+## **Additional Recommendations Implementation**
+
+### **1. Collaboration Between Teams**
+**Tool:** **Version Control with Git (Simulated in Replit)**
+
+Replit uses Git under the hood, but direct Git operations are limited. However, you can simulate branching and merging by managing separate Repls for different features or teams.
+
+### **2. Continuous Integration/Continuous Deployment (CI/CD)**
+**Tool:** **Replit's Built-in Deployments**
+
+Replit automatically deploys your Repl and provides a live URL. For more advanced CI/CD, consider integrating with external services like GitHub Actions, but this requires connecting Replit to GitHub repositories.
+
+### **3. Testing & Quality Assurance**
+**Language/Framework:** **JavaScript with Jest**
+
+1. **Install Jest:**
+   ```bash
+   npm install --save-dev jest
+   ```
+
+2. **Configure Jest:**
+   - Add the following to your `package.json`:
+     ```json
+     "scripts": {
+       "test": "jest"
+     }
+     ```
+
+3. **Create a Test File:**
+   - **`__tests__/booking.test.js`**
+     ```javascript
+     const booking = require('../utils/booking'); // Ensure you have a booking utility
+
+     test('validates booking data correctly', () => {
+       const validData = {
+         stylist: 1,
+         service: 2,
+         date: '2024-12-25',
+         time: '14:00'
+       };
+       expect(booking.validate(validData)).toBe(true);
+
+       const invalidData = {
+         stylist: '',
+         service: 2,
+         date: 'invalid-date',
+         time: '14:00'
+       };
+       expect(booking.validate(invalidData)).toBe(false);
+     });
+     ```
+
+4. **Run Tests:**
+   - Use Replit's shell to run:
+     ```bash
+     npm test
+     ```
+
+### **4. Scalability**
+**Tool:** **Docker for Containerization (Not Directly Supported on Replit)**
+
+Replit does not natively support Docker. However, you can design your application in a modular way, using separate Repls for different services and ensuring they can scale independently.
+
+**Alternative:**
+- Use microservices architecture by deploying different services as separate Repls and communicate via APIs.
+
+---
+
+## **Final Notes**
+
+- **Environment Variables:**  
+  Always use Replit's **Secrets** feature to store sensitive information like API keys, database URLs, and JWT secrets. This ensures your credentials are not exposed in the codebase.
+
+- **Database Considerations:**  
+  Replit DB is suitable for simple applications and prototyping. For production-level applications requiring robust features like relational queries, consider using external database services such as [Supabase](https://supabase.com/), [Firebase](https://firebase.google.com/), or [MongoDB Atlas](https://www.mongodb.com/cloud/atlas).
+
+- **API Endpoint URLs:**  
+  Replace `https://YOUR_BACKEND_URL` with the actual URL provided by Replit for your backend Repl.
+
+- **CORS Configuration:**  
+  Ensure your backend server's CORS settings allow requests from your frontend Repl's URL.
+
+- **Security Practices:**  
+  Regularly update dependencies to patch vulnerabilities. Implement thorough input validation and sanitation to prevent security breaches.
+
+- **Testing:**  
+  Implement comprehensive testing for all modules to ensure reliability and robustness.
+
+By following these adapted guidelines and leveraging Replit's features, you can effectively develop, test, and deploy the Amazing Salon App in an online environment. Replit's collaborative tools also facilitate teamwork, allowing multiple developers to work simultaneously on different aspects of the project.
+
+Feel free to reach out if you need further assistance with specific sections or encounter any challenges during the development process!

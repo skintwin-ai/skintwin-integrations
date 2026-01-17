@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Admin Dashboard</h2>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">User Management</h5>
+                <a href="{{ url_for('auth.register_admin') }}" class="btn btn-primary">Create Admin User</a>
+                <a href="#" class="btn btn-secondary">Manage Users</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">System Configuration</h5>
+                <a href="{{ url_for('settings.index') }}" class="btn btn-primary">General Settings</a>
+                <a href="{{ url_for('settings.payment_settings') }}" class="btn btn-primary">Payment Settings</a>
+                <a href="{{ url_for('settings.loyalty_settings') }}" class="btn btn-primary">Loyalty Program</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Reports</h5>
+                <a href="{{ url_for('reports.index') }}" class="btn btn-secondary">View Reports</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Inventory Management</h5>
+                <a href="{{ url_for('inventory.index') }}" class="btn btn-secondary">Manage Inventory</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Staff Management</h5>
+                <a href="{{ url_for('staff.index') }}" class="btn btn-secondary">Manage Staff</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Client Management</h5>
+                <a href="{{ url_for('clients.index') }}" class="btn btn-secondary">Manage Clients</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

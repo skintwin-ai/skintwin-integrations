@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2>Loyalty Program Settings</h2>
+    
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="list-group">
+                <a href="{{ url_for('settings.index') }}" class="list-group-item list-group-item-action">
+                    Overview
+                </a>
+                <a href="{{ url_for('settings.payment_settings') }}" class="list-group-item list-group-item-action">
+                    Payment Settings
+                </a>
+                <a href="{{ url_for('settings.loyalty_settings') }}" class="list-group-item list-group-item-action active">
+                    Loyalty Program
+                </a>
+            </div>
+        </div>
+        <div class="col-md-9">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h4>Loyalty Program Configuration</h4>
+                </div>
+                <div class="card-body">
+                    <form action="{{ url_for('settings.update_settings') }}" method="POST">
+                        <input type="hidden" name="section" value="loyalty">
+                        
+                        <div class="mb-3">
+                            <label for="loyalty_points_per_dollar" class="form-label">Points Per Dollar Spent</label>
+                            <input type="number" class="form-control" id="loyalty_points_per_dollar" name="loyalty_points_per_dollar" 
+                                   value="{{ points_per_dollar }}" step="1" min="0" max="100">
+                            <div class="form-text">How many loyalty points clients earn per dollar spent</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="points_to_dollar_ratio" class="form-label">Points to Dollar Conversion Ratio</label>
+                            <input type="number" class="form-control" id="points_to_dollar_ratio" name="points_to_dollar_ratio" 
+                                   value="{{ points_to_dollar_ratio }}" step="0.01" min="0.01" max="1">
+                            <div class="form-text">Value of each loyalty point in dollars (e.g., 0.10 means 10 points = $1.00)</div>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">Save Loyalty Settings</button>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h4>Loyalty Program Statistics</h4>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3 text-center mb-3">
+                            <div class="h1 mb-0">{{ stats.total_points }}</div>
+                            <div class="text-muted">Total Points Issued</div>
+                        </div>
+                        <div class="col-md-3 text-center mb-3">
+                            <div class="h1 mb-0">{{ stats.points_redeemed }}</div>
+                            <div class="text-muted">Points Redeemed</div>
+                        </div>
+                        <div class="col-md-3 text-center mb-3">
+                            <div class="h1 mb-0">${{ "%.2f"|format(stats.discount_value) }}</div>
+                            <div class="text-muted">Discount Value</div>
+                        </div>
+                        <div class="col-md-3 text-center mb-3">
+                            <div class="h1 mb-0">{{ stats.redemption_rate }}%</div>
+                            <div class="text-muted">Redemption Rate</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h4>Tier System</h4>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-star"></i>
+                        Clients are automatically assigned tiers based on their total spending.
+                    </div>
+                    
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Tier Name</th>
+                                <th>Minimum Spend</th>
+                                <th>Benefits</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>
+                                    <span class="badge bg-secondary">Bronze</span>
+                                </td>
+                                <td>$0</td>
+                                <td>Standard points earning ({{ points_per_dollar }} per $1)</td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <span class="badge" style="background-color: #C0C0C0;">Silver</span>
+                                </td>
+                                <td>$500</td>
+                                <td>
+                                    <ul class="mb-0">
+                                        <li>10% bonus points on services</li>
+                                        <li>Early access to new services</li>
+                                    </ul>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <span class="badge" style="background-color: #FFD700;">Gold</span>
+                                </td>
+                                <td>$1,000</td>
+                                <td>
+                                    <ul class="mb-0">
+                                        <li>25% bonus points on all purchases</li>
+                                        <li>Exclusive seasonal offers</li>
+                                        <li>Free gift on birthday</li>
+                                    </ul>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <h4>Loyalty Program Calculation Examples</h4>
+                </div>
+                <div class="card-body">
+                    <h5>Example 1: Points Earning</h5>
+                    <p>When a client spends $100:</p>
+                    <ul>
+                        <li>Points earned: $100 × {{ points_per_dollar }} = {{ 100 * points_per_dollar }} points</li>
+                    </ul>
+                    
+                    <h5>Example 2: Points Redemption</h5>
+                    <p>If a client redeems 100 points:</p>
+                    <ul>
+                        <li>Discount value: 100 points × ${{ "%.2f"|format(points_to_dollar_ratio) }} = ${{ "%.2f"|format(100 * points_to_dollar_ratio) }}</li>
+                    </ul>
+                    
+                    <h5>Example 3: Transaction with Points Redemption</h5>
+                    <p>For a $150 service with 200 points redeemed:</p>
+                    <ul>
+                        <li>Points discount: 200 × ${{ "%.2f"|format(points_to_dollar_ratio) }} = ${{ "%.2f"|format(200 * points_to_dollar_ratio) }}</li>
+                        <li>Final amount charged: ${{ "%.2f"|format(150 - (200 * points_to_dollar_ratio)) }}</li>
+                        <li>New points earned: ${{ "%.2f"|format(150 - (200 * points_to_dollar_ratio)) }} × {{ points_per_dollar }} = {{ ((150 - (200 * points_to_dollar_ratio)) * points_per_dollar)|int }} points</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

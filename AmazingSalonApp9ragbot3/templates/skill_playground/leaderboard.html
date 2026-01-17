@@ -1,0 +1,159 @@
+{% extends 'base.html' %}
+
+{% block title %}AI Skills Leaderboard{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="mb-4">
+        <a href="{{ url_for('skill_playground.index') }}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Skills
+        </a>
+    </div>
+    
+    <h1 class="mb-4">
+        <i class="fas fa-chart-line text-primary"></i> 
+        AI Skills Leaderboard
+    </h1>
+    
+    <div class="alert alert-info mb-4">
+        <h5 class="alert-heading"><i class="fas fa-info-circle"></i> About the Leaderboard</h5>
+        <p>
+            The Skills Leaderboard tracks and ranks users based on their AI training achievements.
+            Train your AI in different skills to climb the rankings and showcase your expertise!
+        </p>
+    </div>
+    
+    <div class="row">
+        <div class="col-lg-6">
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-trophy"></i> Achievement Leaders
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Top users ranked by achievements and points earned</p>
+                    
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="bg-light">
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>User</th>
+                                    <th>Achievements</th>
+                                    <th>Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for leader in achievement_leaders %}
+                                <tr>
+                                    <td>
+                                        <span class="badge bg-secondary rounded-circle">{{ loop.index }}</span>
+                                    </td>
+                                    <td>
+                                        <strong>{{ leader.username }}</strong>
+                                        {% if leader.user_id == current_user.id %}
+                                        <span class="badge bg-info">You</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ leader.achievement_count }}</td>
+                                    <td>{{ leader.total_points }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-6">
+            <div class="card mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-graduation-cap"></i> Experience Leaders
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Top users ranked by total experience points earned</p>
+                    
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="bg-light">
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>User</th>
+                                    <th>Total XP</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for leader in experience_leaders %}
+                                <tr>
+                                    <td>
+                                        <span class="badge bg-secondary rounded-circle">{{ loop.index }}</span>
+                                    </td>
+                                    <td>
+                                        <strong>{{ leader.username }}</strong>
+                                        {% if leader.user_id == current_user.id %}
+                                        <span class="badge bg-info">You</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ leader.total_xp }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card mb-4">
+        <div class="card-header bg-light">
+            <h5 class="mb-0">
+                <i class="fas fa-calendar-alt"></i> Recent Achievements
+            </h5>
+        </div>
+        <div class="card-body">
+            <ul class="list-group list-group-flush">
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>admin</strong> earned <span class="badge bg-success">Skin Analysis Expert</span>
+                        <div class="text-muted"><small>150 points</small></div>
+                    </div>
+                    <span class="text-muted"><small>Today</small></span>
+                </li>
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>sarah</strong> earned <span class="badge bg-success">Treatment Optimizer</span>
+                        <div class="text-muted"><small>120 points</small></div>
+                    </div>
+                    <span class="text-muted"><small>Yesterday</small></span>
+                </li>
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>mike</strong> earned <span class="badge bg-success">Julia Master</span>
+                        <div class="text-muted"><small>100 points</small></div>
+                    </div>
+                    <span class="text-muted"><small>3 days ago</small></span>
+                </li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="alert alert-light border">
+        <div class="d-flex align-items-center">
+            <div class="flex-grow-1">
+                <h5>Improve Your Ranking</h5>
+                <p class="mb-0">Train your AI in more skills to earn achievements and experience points.</p>
+            </div>
+            <div>
+                <a href="{{ url_for('skill_playground.index') }}" class="btn btn-primary">
+                    <i class="fas fa-graduation-cap"></i> Train Skills
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

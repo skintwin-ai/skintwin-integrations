@@ -1,0 +1,36 @@
+
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Purchase Orders</h2>
+
+<div class="mb-3">
+    <form action="{{ url_for('inventory.auto_reorder') }}" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">Generate Auto-Reorder</button>
+    </form>
+</div>
+
+<table class="table">
+    <thead>
+        <tr>
+            <th>Product</th>
+            <th>Quantity</th>
+            <th>Supplier</th>
+            <th>Status</th>
+            <th>Created At</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for po in purchase_orders %}
+        <tr>
+            <td>{{ po.product_name }}</td>
+            <td>{{ po.quantity }}</td>
+            <td>{{ po.supplier or 'Not specified' }}</td>
+            <td>{{ po.status }}</td>
+            <td>{{ po.created_at }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,171 @@
+
+/* Voice Assistant Custom Styles */
+.voice-container {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-radius: 1rem;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+}
+
+.voice-header {
+    position: relative;
+    overflow: hidden;
+    padding: 2rem;
+    text-align: center;
+}
+
+.voice-header::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle, rgba(79, 172, 254, 0.1) 0%, rgba(0, 242, 254, 0.0) 75%);
+    transform: rotate(30deg);
+    z-index: 0;
+}
+
+.voice-header h1, .voice-header p {
+    position: relative;
+    z-index: 1;
+}
+
+.pulse-circle {
+    width: 180px;
+    height: 180px;
+    border-radius: 50%;
+    background-color: rgba(13, 110, 253, 0.1);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 0;
+}
+
+.pulse-circle::before, .pulse-circle::after {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background-color: rgba(13, 110, 253, 0.1);
+    animation: pulse 2s infinite;
+    box-shadow: 0 0 20px rgba(13, 110, 253, 0.3);
+}
+
+.pulse-circle::after {
+    animation-delay: 0.5s;
+}
+
+@keyframes pulse {
+    0% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(1.5);
+        opacity: 0;
+    }
+}
+
+#mic-button {
+    position: relative;
+    z-index: 2;
+    width: 80px;
+    height: 80px;
+    transform: scale(1);
+    transition: transform 0.3s ease;
+}
+
+#mic-button:hover {
+    transform: scale(1.1);
+}
+
+#mic-button:active {
+    transform: scale(0.95);
+}
+
+#mic-button i {
+    transition: all 0.3s ease;
+}
+
+.listening #mic-button i {
+    color: #dc3545;
+    animation: pulse 1.5s infinite;
+}
+
+.transcript-container, .response-container {
+    transition: all 0.3s ease;
+    opacity: 0;
+    transform: translateY(20px);
+}
+
+.transcript-container.visible, .response-container.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.command-suggestion {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.command-suggestion:hover {
+    background-color: rgba(13, 110, 253, 0.1);
+    transform: translateY(-2px);
+}
+
+.result-card {
+    transform: translateY(30px);
+    opacity: 0;
+    animation: slide-up 0.5s forwards;
+}
+
+@keyframes slide-up {
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.processing-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 10px;
+    color: #6c757d;
+}
+
+/* Voice visualization */
+.voice-visualization {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 40px;
+    margin: 15px 0;
+}
+
+.voice-bar {
+    width: 4px;
+    height: 100%;
+    margin: 0 2px;
+    background-color: #0d6efd;
+    border-radius: 2px;
+    transform: scaleY(0.1);
+    opacity: 0.2;
+    transition: transform 0.1s ease;
+}
+
+.listening .voice-visualization .voice-bar {
+    animation: voice-wave 0.5s infinite ease-in-out alternate;
+}
+
+@keyframes voice-wave {
+    0% {
+        transform: scaleY(0.1);
+    }
+    100% {
+        transform: scaleY(var(--random-height, 1));
+    }
+}

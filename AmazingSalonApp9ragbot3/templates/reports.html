@@ -1,0 +1,71 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container">
+    <h1 class="mb-4">Salon Reports</h1>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>Appointment Statistics</h5>
+                    <small>{{ start_date.strftime('%B %d, %Y') }} - {{ end_date.strftime('%B %d, %Y') }}</small>
+                </div>
+                <div class="card-body">
+                    <h2 class="card-title">{{ appointments }}</h2>
+                    <p class="card-text">Total appointments in the last 30 days</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>Revenue</h5>
+                    <small>{{ start_date.strftime('%B %d, %Y') }} - {{ end_date.strftime('%B %d, %Y') }}</small>
+                </div>
+                <div class="card-body">
+                    <h2 class="card-title">${{ revenue|round(2) }}</h2>
+                    <p class="card-text">Total revenue in the last 30 days</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>Popular Services</h5>
+                </div>
+                <div class="card-body">
+                    <ul class="list-group">
+                        {% for service, count in popular_services %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            {{ service }}
+                            <span class="badge bg-primary rounded-pill">{{ count }}</span>
+                        </li>
+                        {% else %}
+                        <li class="list-group-item">No service data available</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>Actions</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        <a href="{{ url_for('reports.generate_monthly_report') }}" class="btn btn-primary">Generate Monthly Report</a>
+                        <!-- Add more report actions as needed -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

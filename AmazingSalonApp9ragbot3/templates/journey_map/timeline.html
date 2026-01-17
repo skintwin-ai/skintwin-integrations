@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2>{{ client.name }}'s Skincare Journey</h2>
+
+    <div class="journey-timeline">
+        <div class="journey-insights mb-4">
+            <h4>Journey Insights</h4>
+            <div class="insight-cards" id="insightCards">
+                <!-- Insight cards will be populated by JavaScript -->
+            </div>
+        </div>
+        {% for memory in memories %}
+        <div class="timeline-item" data-memory-id="{{ memory.id }}">
+            <div class="timeline-content">
+                <div class="ai-insight mt-2 text-muted">
+                    <small><i class="fas fa-robot"></i> <span class="insight-text"></span></small>
+                </div>
+                <h4>{{ memory.title }}</h4>
+                <p>{{ memory.description }}</p>
+                <span class="badge bg-info">{{ memory.category }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

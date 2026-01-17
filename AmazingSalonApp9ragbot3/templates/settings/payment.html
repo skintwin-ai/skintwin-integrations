@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2>System Settings</h2>
+    
+    <ul class="nav nav-tabs mb-4">
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'general' %}active{% endif %}" href="{{ url_for('settings.index') }}">
+                General Settings
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'payment' %}active{% endif %}" href="{{ url_for('settings.payment_settings') }}">
+                Payment Settings
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'loyalty' %}active{% endif %}" href="{{ url_for('settings.loyalty_settings') }}">
+                Loyalty Program
+            </a>
+        </li>
+    </ul>
+    
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Stripe Payment Integration</h5>
+                </div>
+                <div class="card-body">
+                    <form action="{{ url_for('settings.update_stripe_keys') }}" method="POST">
+                        <div class="alert alert-info">
+                            <i class="fa fa-info-circle"></i> 
+                            Stripe integration allows you to accept secure credit card payments. You'll need to set up an account at 
+                            <a href="https://stripe.com" target="_blank">stripe.com</a> to obtain your API keys.
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="stripe_public_key" class="form-label">Stripe Public Key</label>
+                            <input type="text" class="form-control" id="stripe_public_key" name="stripe_public_key" 
+                                placeholder="pk_test_..."
+                                value="{{ settings | selectattr('key', 'equalto', 'stripe_public_key') | map(attribute='value') | first | default('') }}">
+                            <div class="form-text">Your Stripe publishable key (starts with 'pk_')</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="stripe_secret_key" class="form-label">Stripe Secret Key</label>
+                            <input type="password" class="form-control" id="stripe_secret_key" name="stripe_secret_key" 
+                                placeholder="sk_test_..."
+                                value="{{ settings | selectattr('key', 'equalto', 'stripe_secret_key') | map(attribute='value') | first | default('') }}">
+                            <div class="form-text">Your Stripe secret key (starts with 'sk_')</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="reveal_secret_key">
+                                <label class="form-check-label" for="reveal_secret_key">
+                                    Show Secret Key
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">Save API Keys</button>
+                        <a href="{{ url_for('auth.admin_dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const revealCheckbox = document.getElementById('reveal_secret_key');
+        const secretKeyInput = document.getElementById('stripe_secret_key');
+        
+        revealCheckbox.addEventListener('change', function() {
+            secretKeyInput.type = this.checked ? 'text' : 'password';
+        });
+    });
+</script>
+{% endblock %}

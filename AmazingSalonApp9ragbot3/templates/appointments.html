@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Appointments</h2>
+
+<div class="mb-3">
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#appointmentModal">Create Appointment</button>
+</div>
+
+<table class="table">
+    <thead>
+        <tr>
+            <th>Client</th>
+            <th>Stylist</th>
+            <th>Service</th>
+            <th>Date & Time</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for appointment in appointments %}
+        <tr>
+            <td>
+                {% if appointment.client is mapping %}
+                    {{ appointment.client }}
+                {% elif appointment.client is string %}
+                    {{ appointment.client }}
+                {% else %}
+                    {{ appointment.client.name if appointment.client else 'N/A' }}
+                {% endif %}
+            </td>
+            <td>
+                {% if appointment.stylist is mapping %}
+                    {{ appointment.stylist }}
+                {% elif appointment.stylist is string %}
+                    {{ appointment.stylist }}
+                {% else %}
+                    {{ appointment.stylist.username if appointment.stylist else 'N/A' }}
+                {% endif %}
+            </td>
+            <td>{{ appointment.service }}</td>
+            <td>
+                {% if appointment.date_time is string %}
+                    {{ appointment.date_time }}
+                {% else %}
+                    {{ appointment.date_time.strftime('%Y-%m-%d %H:%M') }}
+                {% endif %}
+            </td>
+            <td>{{ appointment.status }}</td>
+            <td>
+                <button class="btn btn-sm btn-secondary" onclick="editAppointment({{ appointment.id }})">Edit</button>
+                <form action="{{ url_for('appointments.delete', id=appointment.id) }}" method="POST" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure?')">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<!-- Modal for creating/editing appointments -->
+<div class="modal fade" id="appointmentModal" tabindex="-1" aria-labelledby="appointmentModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="appointmentModalLabel">Create Appointment</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="appointmentForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" id="appointmentId" name="id">
+                    <div class="mb-3">
+                        <label for="client" class="form-label">Client</label>
+                        <select class="form-select" id="client" name="client_id" required>
+                            {% for client in clients %}
+                            <option value="{{ client.id }}">{{ client.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="stylist" class="form-label">Stylist</label>
+                        <select class="form-select" id="stylist" name="stylist_id" required>
+                            {% for stylist in stylists %}
+                            <option value="{{ stylist.id }}">{{ stylist.username }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="service_id" class="form-label">Service</label>
+                        <select class="form-select" id="service_id" name="service_id" required>
+                            {% for service in services %}
+                            <option value="{{ service.id }}">{{ service.name }} ({{ service.duration }} min - ${{ service.price }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="date_time" class="form-label">Date & Time</label>
+                        <input type="datetime-local" class="form-control" id="date_time" name="date_time" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="status" class="form-label">Status</label>
+                        <select class="form-select" id="status" name="status">
+                            <option value="scheduled">Scheduled</option>
+                            <option value="completed">Completed</option>
+                            <option value="cancelled">Cancelled</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function editAppointment(id) {
+    fetch(`/appointments/update/${id}`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('appointmentId').value = data.id;
+            document.getElementById('client').value = data.client_id;
+            document.getElementById('stylist').value = data.stylist_id;
+            document.getElementById('service_id').value = data.service_id;
+            
+            // Format the date_time value for the datetime-local input
+            if (data.date_time) {
+                let dt = new Date(data.date_time);
+                if (!isNaN(dt.getTime())) {
+                    // Format the date as YYYY-MM-DDThh:mm
+                    let localDateTime = dt.getFullYear() + '-' + 
+                        String(dt.getMonth() + 1).padStart(2, '0') + '-' + 
+                        String(dt.getDate()).padStart(2, '0') + 'T' + 
+                        String(dt.getHours()).padStart(2, '0') + ':' + 
+                        String(dt.getMinutes()).padStart(2, '0');
+                    document.getElementById('date_time').value = localDateTime;
+                }
+            }
+            
+            document.getElementById('status').value = data.status;
+            
+            document.getElementById('appointmentModalLabel').textContent = 'Edit Appointment';
+            document.getElementById('appointmentForm').action = `/appointments/update/${id}`;
+            
+            var modal = new bootstrap.Modal(document.getElementById('appointmentModal'));
+            modal.show();
+        });
+}
+</script>
+{% endblock %}

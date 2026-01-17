@@ -1,0 +1,325 @@
+/* Memory Timeline Styles */
+
+/* Timeline base structure */
+.timeline {
+    position: relative;
+    padding: 1rem;
+    margin: 0 auto;
+}
+
+.timeline::before {
+    content: '';
+    position: absolute;
+    width: 4px;
+    background: linear-gradient(to bottom, #6a11cb 0%, #2575fc 100%);
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    margin-left: -2px;
+    border-radius: 2px;
+    box-shadow: 0 0 10px rgba(37, 117, 252, 0.5);
+}
+
+/* Timeline items */
+.timeline-item {
+    position: relative;
+    margin-bottom: 2rem;
+    width: 100%;
+    min-height: 100px;
+}
+
+.timeline-content {
+    position: relative;
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);
+    width: 45%;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.5s ease;
+}
+
+.timeline-item.animate .timeline-content {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Timeline content styling */
+.timeline-content h3 {
+    margin-top: 0;
+    border-bottom: 2px solid rgba(0,0,0,0.1);
+    padding-bottom: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.timeline-content p {
+    margin-bottom: 0;
+}
+
+.timeline-content .date {
+    font-size: 0.85rem;
+    color: #6c757d;
+}
+
+/* Alternate left/right layout */
+.timeline-item:nth-child(odd) .timeline-content {
+    float: right;
+}
+
+.timeline-item:nth-child(even) .timeline-content {
+    float: left;
+}
+
+.timeline-item::after {
+    content: '';
+    display: table;
+    clear: both;
+}
+
+/* Arrows to connect to timeline */
+.timeline-item:nth-child(odd) .timeline-content::before {
+    content: '';
+    position: absolute;
+    top: 16px;
+    left: -15px;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 8px 16px 8px 0;
+    border-color: transparent #ffffff transparent transparent;
+}
+
+.timeline-item:nth-child(even) .timeline-content::before {
+    content: '';
+    position: absolute;
+    top: 16px;
+    right: -15px;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 8px 0 8px 16px;
+    border-color: transparent transparent transparent #ffffff;
+}
+
+/* Timeline icons */
+.timeline-icon {
+    position: absolute;
+    width: 50px;
+    height: 50px;
+    left: 50%;
+    margin-left: -25px;
+    top: 10px;
+    border-radius: 50%;
+    text-align: center;
+    background: white;
+    box-shadow: 0 0 0 4px #6a11cb, inset 0 2px 0 rgba(0,0,0,0.08), 0 3px 0 4px rgba(0,0,0,0.05);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transform: scale(0);
+    transition: all 0.5s ease 0.2s;
+}
+
+.timeline-item.animate .timeline-icon {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.timeline-icon i {
+    font-size: 1.5rem;
+}
+
+/* Memory card styling by type */
+.memory-style {
+    background-color: #e3f2fd;
+    border-left: 5px solid #2196f3;
+}
+
+.memory-preference {
+    background-color: #ffebee;
+    border-left: 5px solid #f44336;
+}
+
+.memory-history {
+    background-color: #e8f5e9;
+    border-left: 5px solid #4caf50;
+}
+
+.memory-feedback {
+    background-color: #fff8e1;
+    border-left: 5px solid #ffc107;
+}
+
+.memory-request {
+    background-color: #e0f7fa;
+    border-left: 5px solid #00bcd4;
+}
+
+/* Timeline icon colors */
+.memory-icon-style {
+    color: #2196f3;
+}
+
+.memory-icon-preference {
+    color: #f44336;
+}
+
+.memory-icon-history {
+    color: #4caf50;
+}
+
+.memory-icon-feedback {
+    color: #ffc107;
+}
+
+.memory-icon-request {
+    color: #00bcd4;
+}
+
+/* Memory summary section */
+.memory-summary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 2rem;
+    border-radius: 1rem;
+    box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);
+    margin-bottom: 2rem;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.5s ease;
+}
+
+.memory-summary.animate {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.memory-highlight {
+    background-color: rgba(255,255,255,0.1);
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.memory-metadata {
+    font-size: 0.8rem;
+    margin-top: 0.5rem;
+    color: rgba(255,255,255,0.7);
+}
+
+.memory-actions {
+    margin-top: 0.5rem;
+}
+
+.memory-actions button {
+    background: none;
+    border: none;
+    color: rgba(0,0,0,0.5);
+    cursor: pointer;
+    margin-right: 0.5rem;
+    transition: color 0.3s;
+}
+
+.memory-actions button:hover {
+    color: rgba(0,0,0,0.8);
+}
+
+/* Back to top button */
+.back-to-top {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    display: none;
+    z-index: 999;
+    opacity: 0.7;
+    transition: opacity 0.3s;
+}
+
+.back-to-top:hover {
+    opacity: 1;
+}
+
+/* Animation delays for staggered appearance */
+.timeline-item:nth-child(1) { transition-delay: 0.1s; }
+.timeline-item:nth-child(2) { transition-delay: 0.2s; }
+.timeline-item:nth-child(3) { transition-delay: 0.3s; }
+.timeline-item:nth-child(4) { transition-delay: 0.4s; }
+.timeline-item:nth-child(5) { transition-delay: 0.5s; }
+.timeline-item:nth-child(6) { transition-delay: 0.6s; }
+.timeline-item:nth-child(7) { transition-delay: 0.7s; }
+.timeline-item:nth-child(8) { transition-delay: 0.8s; }
+.timeline-item:nth-child(9) { transition-delay: 0.9s; }
+.timeline-item:nth-child(10) { transition-delay: 1.0s; }
+
+/* Responsive adjustments */
+@media screen and (max-width: 768px) {
+    .timeline::before {
+        left: 30px;
+    }
+    
+    .timeline-content {
+        width: calc(100% - 80px);
+        float: right !important;
+        margin-left: 60px;
+    }
+    
+    .timeline-item:nth-child(even) .timeline-content::before,
+    .timeline-item:nth-child(odd) .timeline-content::before {
+        left: -15px;
+        border-width: 8px 16px 8px 0;
+        border-color: transparent #ffffff transparent transparent;
+    }
+    
+    .timeline-icon {
+        left: 30px;
+        margin-left: 0;
+    }
+}
+
+/* Memory timeline dashboards stats */
+.memory-stat-card {
+    transition: all 0.3s ease;
+    border-radius: 15px;
+}
+
+.memory-stat-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+}
+
+.memory-stat-icon {
+    font-size: 2.5rem;
+    opacity: 0.7;
+}
+
+/* Memory filters */
+.memory-filters {
+    margin-bottom: 2rem;
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 0.5rem;
+    box-shadow: 0 0.25rem 0.5rem rgba(0,0,0,0.05);
+}
+
+.memory-filter-btn {
+    margin-right: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+/* Memory animation effect */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fadeInUp {
+    animation: fadeInUp 0.5s ease forwards;
+}

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2>System Settings</h2>
+    
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="list-group">
+                <a href="{{ url_for('settings.index') }}" class="list-group-item list-group-item-action active">
+                    Overview
+                </a>
+                <a href="{{ url_for('settings.payment_settings') }}" class="list-group-item list-group-item-action">
+                    Payment Settings
+                </a>
+                <a href="{{ url_for('settings.loyalty_settings') }}" class="list-group-item list-group-item-action">
+                    Loyalty Program
+                </a>
+            </div>
+        </div>
+        <div class="col-md-9">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h4>System Status</h4>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <h5>Stripe Payment</h5>
+                                {% if stripe_configured %}
+                                    <span class="badge bg-success">Configured</span>
+                                {% else %}
+                                    <span class="badge bg-danger">Not Configured</span>
+                                    <div class="mt-2">
+                                        <a href="{{ url_for('settings.payment_settings') }}" class="btn btn-sm btn-primary">Configure Now</a>
+                                    </div>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="mb-3">
+                                <h5>Loyalty Program</h5>
+                                <div>Points to Dollar Ratio: {{ points_to_dollar_ratio }}</div>
+                                <div>Points Per Dollar Spent: {{ points_per_dollar }}</div>
+                                <div class="mt-2">
+                                    <a href="{{ url_for('settings.loyalty_settings') }}" class="btn btn-sm btn-outline-primary">Manage</a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h5>Business Information</h5>
+                            <div>Name: {{ business_info.name }}</div>
+                            <div>Email: {{ business_info.email }}</div>
+                            <div>Phone: {{ business_info.phone }}</div>
+                            <div class="mt-2">
+                                <a href="{{ url_for('settings.payment_settings') }}#business" class="btn btn-sm btn-outline-primary">Edit</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <h4>Loyalty Program Statistics</h4>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3 text-center mb-3">
+                            <div class="h1 mb-0">{{ stats.total_points }}</div>
+                            <div class="text-muted">Total Points Issued</div>
+                        </div>
+                        <div class="col-md-3 text-center mb-3">
+                            <div class="h1 mb-0">{{ stats.points_redeemed }}</div>
+                            <div class="text-muted">Points Redeemed</div>
+                        </div>
+                        <div class="col-md-3 text-center mb-3">
+                            <div class="h1 mb-0">${{ "%.2f"|format(stats.discount_value) }}</div>
+                            <div class="text-muted">Discount Value</div>
+                        </div>
+                        <div class="col-md-3 text-center mb-3">
+                            <div class="h1 mb-0">{{ stats.redemption_rate }}%</div>
+                            <div class="text-muted">Redemption Rate</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card mt-4">
+        <div class="card-header">
+            <h4>All Configuration Settings</h4>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-striped mb-0">
+                <thead>
+                    <tr>
+                        <th>Key</th>
+                        <th>Value</th>
+                        <th>Category</th>
+                        <th>Last Updated</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for config in all_configs %}
+                    <tr>
+                        <td>{{ config.key }}</td>
+                        <td>
+                            {% if config.is_sensitive %}
+                                <em>********</em>
+                            {% else %}
+                                {{ config.value }}
+                            {% endif %}
+                        </td>
+                        <td><span class="badge bg-info">{{ config.category }}</span></td>
+                        <td>{{ config.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td>
+                            <a href="{{ url_for('settings.reset_setting', setting_key=config.key) }}" 
+                               onclick="return confirm('Are you sure you want to reset this setting to its default value?');"
+                               class="btn btn-sm btn-outline-secondary">Reset</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

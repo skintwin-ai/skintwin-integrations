@@ -1,0 +1,113 @@
+{% extends 'base.html' %}
+
+{% block title %}AI Skill Playground{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-4">AI Skill Playground</h1>
+    
+    <div class="row mb-4">
+        <div class="col">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">About Skill Playground</h5>
+                    <p class="card-text">
+                        Train your salon AI assistant in various skills to enhance its capabilities.
+                        The more skills your AI learns, the more effective it becomes at helping with salon tasks.
+                    </p>
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('skill_playground.view_achievements') }}" class="btn btn-outline-primary btn-sm">
+                            <i class="fas fa-trophy"></i> View Achievements
+                        </a>
+                        <a href="{{ url_for('skill_playground.view_models') }}" class="btn btn-outline-primary btn-sm">
+                            <i class="fas fa-brain"></i> My AI Models
+                        </a>
+                        <a href="{{ url_for('skill_playground.leaderboard') }}" class="btn btn-outline-primary btn-sm">
+                            <i class="fas fa-chart-line"></i> Leaderboard
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <h2 class="mb-3">Available Skills</h2>
+    
+    <div class="row">
+        {% for skill in skills %}
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas {{ skill.icon }}"></i> {{ skill.name }}
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <h6 class="card-subtitle mb-2 text-muted">Category: {{ skill.category|replace('_', ' ')|title }}</h6>
+                    <p class="card-text">{{ skill.description }}</p>
+                    
+                    <div class="mb-2">
+                        <span>Difficulty: </span>
+                        {% for i in range(skill.difficulty) %}
+                            <i class="fas fa-star text-warning"></i>
+                        {% endfor %}
+                        {% for i in range(5 - skill.difficulty) %}
+                            <i class="far fa-star text-warning"></i>
+                        {% endfor %}
+                    </div>
+                    
+                    {% if skill.id in user_progress %}
+                    <div class="progress mb-2">
+                        <div class="progress-bar bg-success" role="progressbar" 
+                             style="width: {{ user_progress[skill.id].completion_percentage * 100 }}%"
+                             aria-valuenow="{{ user_progress[skill.id].completion_percentage * 100 }}" 
+                             aria-valuemin="0" aria-valuemax="100">
+                            {{ (user_progress[skill.id].completion_percentage * 100)|int }}%
+                        </div>
+                    </div>
+                    <p class="card-text">
+                        <small class="text-muted">
+                            Level {{ user_progress[skill.id].level }} • 
+                            XP: {{ user_progress[skill.id].experience_points }}
+                        </small>
+                    </p>
+                    {% else %}
+                    <p class="card-text text-muted">You haven't started learning this skill.</p>
+                    {% endif %}
+                    
+                    <div class="d-flex justify-content-between mt-3">
+                        <a href="{{ url_for('skill_playground.view_skill', skill_id=skill.id) }}" class="btn btn-outline-primary btn-sm">
+                            <i class="fas fa-info-circle"></i> Details
+                        </a>
+                        <a href="{{ url_for('skill_playground.train_skill', skill_id=skill.id) }}" class="btn btn-primary btn-sm">
+                            <i class="fas fa-graduation-cap"></i> Train
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    {% if achievements %}
+    <div class="mt-5">
+        <h2 class="mb-3">Recent Achievements</h2>
+        <div class="row">
+            {% for achievement in achievements %}
+            <div class="col-md-4 mb-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <i class="fas {{ achievement.icon }} text-success"></i> {{ achievement.name }}
+                        </h5>
+                        <p class="card-text">{{ achievement.description }}</p>
+                        <p class="text-muted"><small>Points: {{ achievement.points }}</small></p>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

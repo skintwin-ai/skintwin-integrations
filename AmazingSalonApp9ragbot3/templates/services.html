@@ -1,0 +1,40 @@
+
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Services Management</h2>
+    <a href="{{ url_for('services.create') }}" class="btn btn-primary">Add New Service</a>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Description</th>
+                <th>Price</th>
+                <th>Duration (min)</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for service in services %}
+            <tr>
+                <td>{{ service.name }}</td>
+                <td>{{ service.description }}</td>
+                <td>${{ "%.2f"|format(service.price) }}</td>
+                <td>{{ service.duration }}</td>
+                <td>
+                    <a href="{{ url_for('services.edit', id=service.id) }}" class="btn btn-sm btn-info">Edit</a>
+                    <form action="{{ url_for('services.delete', id=service.id) }}" method="POST" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure?')">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
