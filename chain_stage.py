@@ -250,6 +250,22 @@ def _named(record: object, *keys: str) -> str:
     return ""
 
 
+def _order_label(record: object, *keys: str) -> str:
+    """A present order number wins. A blank one falls through to the next name."""
+    if not isinstance(record, dict):
+        return ""
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            continue
+        if value:
+            return str(value).strip()
+    return ""
+
+
 def _named_sku(record: object) -> str:
     return _named(record, "sku", "sku_id", "skuId")
 
@@ -323,7 +339,7 @@ def draft_order_commands(draft: dict) -> list[dict]:
     status = str(draft.get("status") or "").strip().lower()
     if status != "completed":
         return []
-    order_number = draft.get("order_id") or draft.get("name") or draft.get("id")
+    order_number = _order_label(draft, "order_id", "name", "id")
     return shopify_fulfillment_commands(
         {
             "order_number": order_number,
@@ -336,8 +352,7 @@ def draft_order_commands(draft: dict) -> list[dict]:
 def shopify_fulfillment_commands(order: dict) -> list[dict]:
     if not isinstance(order, dict):
         raise StageRejection("order is required")
-    order_number = order.get("order_number") or order.get("name") or order.get("id")
-    order_id = _text(str(order_number) if order_number is not None else "", "order number")
+    order_id = _text(_order_label(order, "order_number", "name", "id"), "order number")
     items = order.get("line_items")
     if items is None:
         items = []
@@ -402,8 +417,7 @@ def shopify_refunded_line_commands(order: dict) -> list[dict]:
     refunds = order.get("refunds") or []
     if not isinstance(refunds, list):
         raise StageRejection("refunds must be a list")
-    order_number = order.get("order_number") or order.get("name") or order.get("id")
-    order_id = _text(str(order_number) if order_number is not None else "", "order number")
+    order_id = _text(_order_label(order, "order_number", "name", "id"), "order number")
     returns = []
     seen: set[str] = set()
     for refund in refunds:
@@ -505,7 +519,7 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
     currency = order.get("currency") or "USD"
     explicit = _named(order, "fulfillment_id", "fulfillmentId")
     if explicit:
-        order_number = order.get("order_number") or order.get("id") or explicit
+        order_number = _order_label(order, "order_number", "id") or explicit
         return [
             {
                 "command": "settle",
@@ -521,8 +535,7 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
             }
         ]
     commands = []
-    order_number = order.get("order_number") or order.get("name") or order.get("id")
-    order_id = str(order_number) if order_number is not None else ""
+    order_id = _order_label(order, "order_number", "name", "id")
     defaults = _order_line_defaults(order)
     for index, item in enumerate(order.get("line_items") or []):
         if not isinstance(item, dict):
@@ -585,7 +598,7 @@ def opencart_fulfillment_commands(order: dict) -> list[dict]:
         items.append(_opencart_identity(item))
     return shopify_fulfillment_commands(
         {
-            "order_number": order.get("order_id") or order.get("order_number") or order.get("id"),
+            "order_number": _order_label(order, "order_id", "order_number", "id"),
             "line_items": items,
         }
     )
@@ -617,7 +630,7 @@ def opencart_settlement_commands(order: dict) -> list[dict]:
         items.append(line)
     return shopify_settlement_commands(
         {
-            "order_number": order.get("order_id") or order.get("order_number") or order.get("id"),
+            "order_number": _order_label(order, "order_id", "order_number", "id"),
             "currency": order.get("currency_code") or order.get("currency") or "USD",
             "total_price": order.get("total"),
             "fulfillment_id": _named(order, "fulfillment_id", "fulfillmentId"),
