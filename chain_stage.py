@@ -542,7 +542,11 @@ def shopify_refunded_line_commands(order: dict) -> list[dict]:
             if not isinstance(line, dict) or index is None:
                 continue
             refunded = refund_line.get("quantity")
-            sold = line.get("quantity") or 1
+            sold = line.get("quantity")
+            if sold is None or (isinstance(sold, str) and not sold.strip()):
+                if isinstance(order_line, dict) and order_line is not line:
+                    sold = order_line.get("quantity")
+            sold = sold or 1
             try:
                 refunded_qty = _quantity(refunded)
                 sold_qty = _quantity(sold)
