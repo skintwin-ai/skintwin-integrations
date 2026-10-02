@@ -214,10 +214,12 @@ class ShopifyWebhookHandler:
         order_id = data.get('id')
         order_number = data.get('order_number')
         logger.info(f"Shopify order fulfilled: #{order_number} (ID: {order_id})")
+        recorded = self._supply_chain("record_shopify_fulfillments", data, "orders/fulfilled")
         return {
             'action': 'fulfill',
             'order_id': order_id,
-            'order_number': order_number
+            'order_number': order_number,
+            'recorded': recorded,
         }
     
     def on_order_paid(self, data: Dict) -> Dict:
@@ -225,10 +227,12 @@ class ShopifyWebhookHandler:
         order_id = data.get('id')
         order_number = data.get('order_number')
         logger.info(f"Shopify order paid: #{order_number} (ID: {order_id})")
+        recorded = self._supply_chain("record_shopify_settlement", data, "orders/paid")
         return {
             'action': 'paid',
             'order_id': order_id,
-            'order_number': order_number
+            'order_number': order_number,
+            'recorded': recorded,
         }
     
     # ==================== Product Handlers ====================
@@ -238,10 +242,12 @@ class ShopifyWebhookHandler:
         product_id = data.get('id')
         title = data.get('title')
         logger.info(f"Shopify product created: {title} (ID: {product_id})")
+        recorded = self._supply_chain("record_shopify_catalog", data, "products/create")
         return {
             'action': 'create',
             'product_id': product_id,
-            'title': title
+            'title': title,
+            'recorded': recorded,
         }
     
     def on_product_updated(self, data: Dict) -> Dict:
@@ -249,11 +255,27 @@ class ShopifyWebhookHandler:
         product_id = data.get('id')
         title = data.get('title')
         logger.info(f"Shopify product updated: {title} (ID: {product_id})")
+        recorded = self._supply_chain("record_shopify_catalog", data, "products/update")
         return {
             'action': 'update',
             'product_id': product_id,
-            'title': title
+            'title': title,
+            'recorded': recorded,
         }
+
+    def _supply_chain(self, recorder: str, data: Dict, topic: str):
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        import chain_stage
+
+        recorded = getattr(chain_stage, recorder)(data)
+        if isinstance(recorded, dict) and recorded.get("ok") is False:
+            raise WebhookError(recorded.get("error") or "supply chain rejected the webhook", event_type=topic)
+        return recorded
     
     def on_product_deleted(self, data: Dict) -> Dict:
         """Handle product deleted event."""

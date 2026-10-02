@@ -95,6 +95,212 @@ def _commit(request: dict, result: tuple[dict, int]) -> tuple[dict, int]:
     return result
 
 
+def formula_id_from_shopify(product: dict) -> str | None:
+    if not isinstance(product, dict):
+        return None
+    direct = product.get("formulaId") or product.get("formula_id")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    tags = product.get("tags")
+    if isinstance(tags, str):
+        tags = tags.split(",")
+    if not isinstance(tags, list):
+        return None
+    for tag in tags:
+        value = str(tag).strip()
+        marker = "formula:"
+        if value.lower().startswith(marker):
+            formula = value[len(marker) :].strip()
+            if formula:
+                return formula
+    return None
+
+
+def shopify_catalog_commands(product: dict) -> list[dict]:
+    formula_id = formula_id_from_shopify(product)
+    if formula_id is None:
+        return []
+    name = _text(product.get("title") or product.get("name"), "name")
+    variants = product.get("variants") if isinstance(product.get("variants"), list) else []
+    sku = ""
+    if variants and isinstance(variants[0], dict):
+        sku = variants[0].get("sku") or ""
+    sku = _text(sku or product.get("sku") or name, "sku")
+    return [
+        {
+            "command": "catalog_sku",
+            "args": {"sku_id": sku, "formula_id": formula_id, "name": name},
+        }
+    ]
+
+
+def shopify_fulfillment_commands(order: dict) -> list[dict]:
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    order_number = order.get("order_number") or order.get("name") or order.get("id")
+    order_id = _text(str(order_number) if order_number is not None else "", "order number")
+    items = order.get("line_items")
+    if items is None:
+        items = []
+    if not isinstance(items, list):
+        raise StageRejection("line_items must be a list")
+    commands = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise StageRejection("each line item must be an object")
+        sku = item.get("sku")
+        if not isinstance(sku, str) or not sku.strip():
+            continue
+        location, milligrams, kind, practitioner = _shopify_line(item)
+        if location is None and milligrams is None and kind is None:
+            continue
+        if not isinstance(location, str) or not location.strip() or milligrams is None:
+            raise StageRejection(f"sku {sku} requires location and milligrams")
+        args = {
+            "fulfillment_id": f"{order_id}:{index}:{sku.strip()}",
+            "sku_id": sku.strip(),
+            "location": location.strip(),
+            "milligrams": _milligrams(milligrams),
+            "kind": kind or "retail",
+            "practitioner_id": practitioner,
+        }
+        if args["kind"] == "treatment" and not practitioner:
+            raise StageRejection("practitioner_id is required")
+        commands.append({"command": "fulfill", "args": args})
+    return commands
+
+
+def shopify_settlement_commands(order: dict) -> list[dict]:
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    currency = order.get("currency") or "USD"
+    explicit = order.get("fulfillment_id")
+    if isinstance(explicit, str) and explicit.strip():
+        order_number = order.get("order_number") or order.get("id") or explicit
+        return [
+            {
+                "command": "settle",
+                "args": {
+                    "settlement_id": _text(
+                        str(order.get("settlement_id") or f"pay-{order_number}"),
+                        "settlement_id",
+                    ),
+                    "fulfillment_id": explicit.strip(),
+                    "amount_cents": _price_cents(order.get("total_price") or order.get("amount")),
+                    "currency": currency,
+                },
+            }
+        ]
+    commands = []
+    order_number = order.get("order_number") or order.get("name") or order.get("id")
+    order_id = str(order_number) if order_number is not None else ""
+    for index, item in enumerate(order.get("line_items") or []):
+        if not isinstance(item, dict):
+            continue
+        sku = item.get("sku")
+        if not isinstance(sku, str) or not sku.strip():
+            continue
+        location, milligrams, _kind, _practitioner = _shopify_line(item)
+        if location is None and milligrams is None:
+            continue
+        quantity = item.get("quantity") or 1
+        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
+            raise StageRejection("quantity must be a positive integer")
+        commands.append(
+            {
+                "command": "settle",
+                "args": {
+                    "settlement_id": f"pay-{order_id}:{index}:{sku.strip()}",
+                    "fulfillment_id": f"{order_id}:{index}:{sku.strip()}",
+                    "amount_cents": _price_cents(item.get("price")) * quantity,
+                    "currency": currency,
+                },
+            }
+        )
+    return commands
+
+
+def record_shopify_catalog(product: dict) -> dict | None:
+    try:
+        commands = shopify_catalog_commands(product)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_many(commands)
+
+
+def record_shopify_fulfillments(order: dict) -> dict | None:
+    try:
+        commands = shopify_fulfillment_commands(order)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_many(commands)
+
+
+def record_shopify_settlement(order: dict) -> dict | None:
+    try:
+        commands = shopify_settlement_commands(order)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_many(commands)
+
+
+def _shopify_line(item: dict) -> tuple[object, object, str | None, str | None]:
+    location = item.get("location")
+    milligrams = item.get("milligrams")
+    kind = None
+    practitioner = item.get("practitioner_id")
+    properties = item.get("properties") or []
+    if isinstance(properties, list):
+        for prop in properties:
+            if not isinstance(prop, dict):
+                continue
+            name = str(prop.get("name") or "").lower()
+            value = prop.get("value")
+            if name == "location" and not location:
+                location = value
+            elif name == "milligrams" and milligrams is None:
+                milligrams = value
+            elif name == "kind" and isinstance(value, str):
+                kind = value.strip()
+            elif name == "practitioner_id" and not practitioner:
+                practitioner = value
+    return location, milligrams, kind, practitioner if isinstance(practitioner, str) else None
+
+
+def _milligrams(value: object) -> int:
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise StageRejection("milligrams must be a positive integer")
+    return value
+
+
+def _price_cents(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise StageRejection("amount_cents is required")
+    try:
+        cents = int(round(float(value) * 100))
+    except (TypeError, ValueError) as exc:
+        raise StageRejection("amount_cents is required") from exc
+    if cents < 1:
+        raise StageRejection("amount_cents must be a positive integer")
+    return cents
+
+
+def _commit_many(commands: list[dict]) -> dict | None:
+    if not commands:
+        return None
+    if not os.environ.get("SKINTWIN_CHAIN_LEDGER"):
+        use_shared_ledger()
+    locator = _locator()
+    if locator is None:
+        return {"ok": False, "error": "supply-chain hub is not present"}
+    error = locator.commit_commands(commands)
+    if error:
+        return {"ok": False, "error": error}
+    return {"ok": True, "count": len(commands)}
+
+
 def use_shared_ledger() -> None:
     locator = _locator()
     if locator is not None:
