@@ -530,14 +530,35 @@ def _merge_recorded_returns(commands: list[dict], order_id: str) -> list[dict]:
     return merged
 
 
+def _recorded_sale_label(order: dict) -> str:
+    """The id a sale was recorded under.
+
+    A completed draft records order_id. A storefront order records order_number, then its name, then its id.
+    """
+    if _order_label(order, "order_number"):
+        return _order_label(order, "order_number", "name", "id")
+    if _order_label(order, "order_id"):
+        return _order_label(order, "order_id", "name", "id")
+    return _order_label(order, "name", "id")
+
+
 def shopify_return_commands(order: dict) -> list[dict]:
     """A cancelled order returns every sale that order already drew.
 
     A line the payload names is returned from that line.
     A sale the payload omits is returned from the recorded fulfillment.
+    A completed draft records that sale under order_id, so a delete that names the draft id still returns it.
     """
-    commands = _sale_returns(shopify_fulfillment_commands(order))
-    return _merge_recorded_returns(commands, _order_label(order, "order_number", "name", "id"))
+    payload = order
+    label = ""
+    if isinstance(order, dict):
+        label = _recorded_sale_label(order)
+        if label and label != _order_label(order, "order_number", "name", "id"):
+            payload = {**order, "order_number": label}
+    commands = _sale_returns(shopify_fulfillment_commands(payload))
+    if not isinstance(order, dict):
+        return commands
+    return _merge_recorded_returns(commands, label)
 
 
 _SHOPIFY_RETURNED = frozenset({"refunded", "voided"})

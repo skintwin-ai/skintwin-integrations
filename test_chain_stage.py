@@ -10423,6 +10423,19 @@ class SettlementRouteTests(unittest.TestCase):
                     def put(self, endpoint, data):
                         return {"draft_order": self.response}
 
+                draft_named = {
+                    "id": 3,
+                    "name": "#D3",
+                    "order_id": 30,
+                    "line_items": [
+                        {"title": "Consultation"},
+                        {"sku": "sku-serum-c", "location": "cape-town", "milligrams": 1000},
+                    ],
+                }
+                self.assertEqual(
+                    [command["args"]["fulfillment_id"] for command in shopify_return_commands(draft_named)],
+                    ["30:1:sku-serum-c"],
+                )
                 deleted = shopify.ShopifyWebhookHandler("secret").on_draft_order_deleted({"id": 3})
                 self.assertEqual(deleted["draft_order_id"], 3)
                 self.assertIsNone(deleted["recorded"])
@@ -10531,6 +10544,78 @@ class SettlementRouteTests(unittest.TestCase):
                 other = shopify.ShopifyWebhookHandler("secret").on_draft_order_deleted({"id": 19})
                 self.assertIsNone(other["recorded"])
                 self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                split = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "30:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 1000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "30:1:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 1000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "4:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 1000,
+                                        "kind": "retail",
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(split.returncode, 0, split.stderr or split.stdout)
+                drafted = {
+                    "id": 3,
+                    "name": "#D3",
+                    "order_id": 30,
+                    "line_items": [
+                        {"title": "Consultation"},
+                        {"sku": "sku-serum-c", "location": "cape-town", "milligrams": 1000},
+                    ],
+                }
+                named = shopify_return_commands(drafted)
+                self.assertEqual(
+                    [command["args"]["fulfillment_id"] for command in named],
+                    ["30:1:sku-serum-c", "30:0:sku-serum-c"],
+                )
+                returned_draft = shopify.ShopifyWebhookHandler("secret").on_draft_order_deleted(drafted)
+                self.assertEqual(returned_draft["recorded"], {"ok": True, "count": 2})
+                draft_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"return_id": "return:30:0:sku-serum-c"', draft_text)
+                self.assertIn('"return_id": "return:30:1:sku-serum-c"', draft_text)
+                self.assertNotIn('"return_id": "return:#D3:', draft_text)
+                self.assertEqual(draft_text.count('"return_id": "return:3:0:sku-serum-c"'), 1)
+                self.assertNotIn('"return_id": "return:9:0:sku-serum-c"', draft_text)
+                self.assertNotIn('"return_id": "return:4:0:sku-serum-c"', draft_text)
+                self.assertNotIn("return:to-cape-town", draft_text)
+                drafted_again = shopify.ShopifyWebhookHandler("secret").on_draft_order_deleted(drafted)
+                self.assertEqual(drafted_again["recorded"], {"ok": True, "count": 0})
+                self.assertEqual(ledger.read_text(encoding="utf-8"), draft_text)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
