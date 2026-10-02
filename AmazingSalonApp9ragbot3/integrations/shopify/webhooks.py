@@ -326,10 +326,12 @@ class ShopifyWebhookHandler:
         draft_order_id = data.get('id')
         name = data.get('name')
         logger.info(f"Shopify draft order created: {name} (ID: {draft_order_id})")
+        recorded = self._supply_chain("record_draft_order", data, "draft_orders/create")
         return {
             'action': 'create',
             'draft_order_id': draft_order_id,
-            'name': name
+            'name': name,
+            'recorded': recorded,
         }
     
     def on_draft_order_updated(self, data: Dict) -> Dict:
@@ -337,10 +339,12 @@ class ShopifyWebhookHandler:
         draft_order_id = data.get('id')
         name = data.get('name')
         logger.info(f"Shopify draft order updated: {name} (ID: {draft_order_id})")
+        recorded = self._supply_chain("record_draft_order", data, "draft_orders/update")
         return {
             'action': 'update',
             'draft_order_id': draft_order_id,
-            'name': name
+            'name': name,
+            'recorded': recorded,
         }
     
     def on_draft_order_deleted(self, data: Dict) -> Dict:

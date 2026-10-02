@@ -134,6 +134,22 @@ def shopify_catalog_commands(product: dict) -> list[dict]:
     ]
 
 
+def draft_order_commands(draft: dict) -> list[dict]:
+    """A completed B2B draft is an outlet sale. Open and invoiced drafts are not."""
+    if not isinstance(draft, dict):
+        raise StageRejection("draft order is required")
+    status = str(draft.get("status") or "").strip().lower()
+    if status != "completed":
+        return []
+    order_number = draft.get("order_id") or draft.get("name") or draft.get("id")
+    return shopify_fulfillment_commands(
+        {
+            "order_number": order_number,
+            "line_items": draft.get("line_items") or [],
+        }
+    )
+
+
 def shopify_fulfillment_commands(order: dict) -> list[dict]:
     if not isinstance(order, dict):
         raise StageRejection("order is required")
@@ -339,7 +355,15 @@ def record_shopify_fulfillments(order: dict) -> dict | None:
         commands = shopify_fulfillment_commands(order)
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}
-    return _commit_many(commands)
+    return _commit_fulfillments(commands)
+
+
+def record_draft_order(draft: dict) -> dict | None:
+    try:
+        commands = draft_order_commands(draft)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_fulfillments(commands)
 
 
 def record_shopify_settlement(order: dict) -> dict | None:
@@ -391,6 +415,50 @@ def _price_cents(value: object) -> int:
     if cents < 1:
         raise StageRejection("amount_cents must be a positive integer")
     return cents
+
+
+def _commit_fulfillments(commands: list[dict]) -> dict | None:
+    """Append new fulfillments. The same sale arriving again is not a second draw."""
+    if not commands:
+        return None
+    same = _same_recorded_fulfillments(commands)
+    if same is True:
+        return {"ok": True, "count": 0}
+    if same is False:
+        return {"ok": False, "error": "id already exists"}
+    return _commit_many(commands)
+
+
+def _same_recorded_fulfillments(commands: list[dict]) -> bool | None:
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_file():
+        return None
+    found: dict[str, dict] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "fulfill":
+            continue
+        args = record.get("args") or {}
+        found[str(args.get("fulfillment_id"))] = args
+    matched = 0
+    for command in commands:
+        args = command["args"]
+        prior = found.get(str(args.get("fulfillment_id")))
+        if prior is None:
+            continue
+        if prior != args:
+            return False
+        matched += 1
+    if matched == 0:
+        return None
+    if matched == len(commands):
+        return True
+    return False
 
 
 def _commit_many(commands: list[dict]) -> dict | None:
