@@ -427,6 +427,24 @@ def shopify_fulfillment_commands(order: dict) -> list[dict]:
     return commands
 
 
+def _recorded_fulfillment(fulfillment_id: str) -> bool:
+    """True when this sale was already drawn. A refund that omits location still names it."""
+    if not fulfillment_id:
+        return False
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw or not Path(raw).is_file():
+        return False
+    for line in Path(raw).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "fulfill":
+            continue
+        if (record.get("args") or {}).get("fulfillment_id") == fulfillment_id:
+            return True
+    return False
+
+
 def _recorded_sale_returns(order_id: str) -> list[dict]:
     """Sales already drawn for this order, when the cancel payload omits the lines."""
     if not order_id:
@@ -476,6 +494,7 @@ def shopify_refunded_line_commands(order: dict) -> list[dict]:
     """A fully refunded line of a shipped order returns that sale.
 
     A refund quantity below the line quantity stays off the ledger.
+    A line that names the sku but not the location returns the sale already drawn.
     """
     if not isinstance(order, dict):
         raise StageRejection("order is required")
@@ -525,12 +544,13 @@ def shopify_refunded_line_commands(order: dict) -> list[dict]:
             sku = _named_sku(line)
             if not sku:
                 continue
+            fulfillment_id = f"{order_id}:{index}:{sku}"
             location, milligrams, _kind, _practitioner = _shopify_line(line, _order_line_defaults(order))
             if location is None and milligrams is None:
-                continue
-            if not isinstance(location, str) or not location.strip() or milligrams is None:
+                if not _recorded_fulfillment(fulfillment_id):
+                    continue
+            elif not isinstance(location, str) or not location.strip() or milligrams is None:
                 raise StageRejection(f"sku {sku} requires location and milligrams")
-            fulfillment_id = f"{order_id}:{index}:{sku}"
             if fulfillment_id in seen:
                 continue
             seen.add(fulfillment_id)
