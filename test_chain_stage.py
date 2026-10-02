@@ -10292,8 +10292,8 @@ class SettlementRouteTests(unittest.TestCase):
                 restocked = ledger.read_text(encoding="utf-8")
                 self.assertIn('"return_id": "return:4:0:sku-serum-c"', restocked)
                 connector.responses.append({"line_items": [line]})
-                with self.assertRaises(IntegrationError):
-                    connector.update_order(5, {"line_items": [{"title": "Signature Facial"}]})
+                opened = connector.update_order(5, {"line_items": [{"title": "Signature Facial"}]})
+                self.assertEqual(opened.get("line_items"), [line])
                 self.assertNotIn('"fulfillment_id": "5:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
                 self.assertEqual(ledger.read_text(encoding="utf-8"), restocked)
                 before_changed = list(connector.sent)
