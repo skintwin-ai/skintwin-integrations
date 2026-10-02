@@ -66,6 +66,13 @@ def _record_shopify_draft(draft):
     return recorded
 
 
+def _record_shopify_return(order):
+    """A cancelled order records the same return a webhook would record."""
+    recorded = _chain_stage().record_shopify_returns(order)
+    _reject_ledger(recorded, "return")
+    return recorded
+
+
 class ShopifyB2BConnector(BaseConnector):
     """
     Connector for Shopify Admin API with B2B features.
@@ -382,7 +389,9 @@ class ShopifyB2BConnector(BaseConnector):
         """
         endpoint = f"orders/{order_id}/cancel.json"
         response = self.post(endpoint, {'reason': reason})
-        return response.get('order', response)
+        order = response.get('order', response)
+        _record_shopify_return(order)
+        return order
     
     # ==================== Customer Operations ====================
     
