@@ -931,7 +931,21 @@ def wix_return_commands(booking: dict) -> list[dict]:
     return commands
 
 
+_WIX_CANCELLED = frozenset({"canceled", "cancelled"})
+
+
+def _wix_cancelled(booking: dict) -> bool:
+    """Wix spells the status CANCELED. A declined booking is not a cancellation."""
+    if not isinstance(booking, dict):
+        return False
+    nested = booking.get("booking") if isinstance(booking.get("booking"), dict) else booking
+    status = str(nested.get("status") or "").strip().lower()
+    return status in _WIX_CANCELLED
+
+
 def record_wix_deliveries(booking: dict) -> dict | None:
+    if _wix_cancelled(booking):
+        return record_wix_cancellation(booking)
     try:
         commands = wix_delivery_commands(booking)
     except StageRejection as exc:
