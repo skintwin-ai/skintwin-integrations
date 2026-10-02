@@ -427,9 +427,14 @@ class WixBookingsConnector(BaseConnector):
             raise IntegrationError(f"Failed to create booking: {e}", platform=self.PLATFORM_NAME)
         # Wix is already called. A delivery on the created booking is the same transfer a webhook would record.
         # A cancellation that omits the delivery returns the movement this booking already recorded.
-        if created_booking is not appointment_data and not request_cancelled:
+        echo_omits = (
+            created_booking is not appointment_data
+            and _wix_update_cancelled(created_booking)
+            and not _names_wix_delivery(created_booking)
+        )
+        if created_booking is not appointment_data and not request_cancelled and not echo_omits:
             _record_named_wix_delivery(created_booking)
-        if omitted_cancel:
+        if omitted_cancel or echo_omits:
             booking_id = str(
                 (appointment_data.get("id") if isinstance(appointment_data, dict) else "")
                 or created_booking.get("id")
@@ -482,7 +487,7 @@ class WixBookingsConnector(BaseConnector):
         )
         if updated_booking is not appointment_data and not omitted_cancel and not response_omits:
             _record_named_wix_delivery(updated_booking, appointment_id)
-        if omitted_cancel or (response_omits and not _names_wix_delivery(appointment_data)):
+        if omitted_cancel or response_omits:
             _record_wix_cancellation(appointment_id)
         return updated_booking
     

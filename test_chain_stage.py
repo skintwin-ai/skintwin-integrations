@@ -12253,6 +12253,221 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_wix_save_that_cancels_without_a_delivery_returns_the_one_just_drawn(self) -> None:
+        delivery = {
+            "sku_id": "sku-serum-c",
+            "batch_id": "batch-1",
+            "source": "plant",
+            "destination": "cape-town",
+            "milligrams": 2000,
+        }
+        services = [{"name": "Facial"}, {"delivery": delivery}]
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationError = importlib.import_module("integrations.common.exceptions").IntegrationError
+                WixBookingsConnector = importlib.import_module(
+                    "integrations.wix.connector"
+                ).WixBookingsConnector
+
+                class _Posted(WixBookingsConnector):
+                    def __init__(self):
+                        self.posted = []
+                        self.updated = []
+
+                    def post(self, endpoint, data=None):
+                        self.posted.append(endpoint)
+                        body = (data or {}).get("booking", {})
+                        service_id = ((body.get("bookedEntity") or {}).get("slot") or {}).get("serviceId")
+                        if service_id == "cancel-echo":
+                            return {"booking": {"id": "book-echo", "status": "CANCELED"}}
+                        if service_id == "decline-echo":
+                            return {"booking": {"id": "book-echo", "status": "DECLINED"}}
+                        return {"booking": {"id": body.get("id") or "wix-created", "revision": "1"}}
+
+                    def get(self, endpoint, params=None):
+                        return {"booking": {"id": endpoint, "revision": "1"}}
+
+                    def put(self, endpoint, data=None):
+                        self.updated.append(endpoint)
+                        body = (data or {}).get("booking", {})
+                        if body.get("id") == "book-update":
+                            return {"booking": {"id": "book-update", "status": "CANCELED"}}
+                        return {"booking": {"id": body.get("id"), "revision": "2"}}
+
+                connector = _Posted()
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 8000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "xfer-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 1000,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                created = connector.create_appointment(
+                    {
+                        "id": "book-draw",
+                        "service_id": "cancel-echo",
+                        "services": services,
+                    }
+                )
+                self.assertEqual(created.get("id"), "book-echo")
+                self.assertEqual(created.get("status"), "CANCELED")
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "book-draw:1"', text)
+                self.assertIn('"transfer_id": "return:book-draw:1"', text)
+                self.assertNotIn('"transfer_id": "book-echo:0"', text)
+                self.assertNotIn('"transfer_id": "return:xfer-cape-town"', text)
+                again = connector.create_appointment(
+                    {
+                        "id": "book-draw",
+                        "service_id": "cancel-echo",
+                        "services": services,
+                    }
+                )
+                self.assertEqual(again.get("id"), "book-echo")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                declined = connector.create_appointment(
+                    {
+                        "id": "book-decline",
+                        "service_id": "decline-echo",
+                        "services": services,
+                    }
+                )
+                self.assertEqual(declined.get("status"), "DECLINED")
+                held = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "book-decline:1"', held)
+                self.assertNotIn('"transfer_id": "return:book-decline:1"', held)
+                self.assertNotIn('"transfer_id": "return:xfer-cape-town"', held)
+                before_changed = len(connector.posted)
+                with self.assertRaises(IntegrationError):
+                    connector.create_appointment(
+                        {
+                            "id": "book-draw",
+                            "service_id": "cancel-echo",
+                            "services": [
+                                {"name": "Facial"},
+                                {"delivery": {**delivery, "milligrams": 1000}},
+                            ],
+                        }
+                    )
+                self.assertEqual(len(connector.posted), before_changed)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), held)
+                updated = connector.update_appointment(
+                    "book-update",
+                    {"services": services},
+                )
+                self.assertEqual(updated.get("status"), "CANCELED")
+                moved = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "book-update:1"', moved)
+                self.assertIn('"transfer_id": "return:book-update:1"', moved)
+                self.assertNotIn('"transfer_id": "return:xfer-cape-town"', moved)
+                repeated = connector.update_appointment(
+                    "book-update",
+                    {"services": services},
+                )
+                self.assertEqual(repeated.get("id"), "book-update")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), moved)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
 
 if __name__ == "__main__":
     unittest.main()
