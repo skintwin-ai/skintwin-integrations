@@ -148,7 +148,8 @@ class OpenCartWebhookHandler:
         """Handle order updated event."""
         order_id = data.get('order_id')
         logger.info(f"OpenCart order updated: {order_id}")
-        return {'action': 'update', 'order_id': order_id}
+        recorded = self._supply_chain("record_opencart_fulfillments", data, "order/updated")
+        return {'action': 'update', 'order_id': order_id, 'recorded': recorded}
     
     def on_order_status_changed(self, data: Dict) -> Dict:
         """Handle order status changed event."""

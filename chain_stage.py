@@ -267,6 +267,36 @@ def shopify_return_commands(order: dict) -> list[dict]:
     return _sale_returns(shopify_fulfillment_commands(order))
 
 
+_SHOPIFY_RETURNED = frozenset({"refunded", "voided"})
+
+
+def _shopify_returned(order: dict) -> bool:
+    if order.get("cancelled_at") or order.get("cancel_reason"):
+        return True
+    status = str(order.get("financial_status") or "").strip().lower()
+    return status in _SHOPIFY_RETURNED
+
+
+def shopify_order_update_commands(order: dict) -> list[dict]:
+    """An order update records a sale only once Shopify says it shipped, paid, or came back.
+
+    An open update, a partial fulfillment, and a partial refund stay off the ledger.
+    A paid order that is not fulfilled does not settle, because the sale is not on the ledger yet.
+    """
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    fulfillment_status = str(order.get("fulfillment_status") or "").strip().lower()
+    if _shopify_returned(order) or fulfillment_status == "restocked":
+        return shopify_return_commands(order)
+    if fulfillment_status != "fulfilled":
+        return []
+    commands = shopify_fulfillment_commands(order)
+    financial = str(order.get("financial_status") or "").strip().lower()
+    if financial == "paid":
+        commands.extend(shopify_settlement_commands(order))
+    return commands
+
+
 def _sale_returns(fulfillments: list[dict]) -> list[dict]:
     returns = []
     for command in fulfillments:
@@ -550,6 +580,14 @@ def record_shopify_settlement(order: dict) -> dict | None:
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}
     return _commit_many(commands)
+
+
+def record_shopify_order_update(order: dict) -> dict | None:
+    try:
+        commands = shopify_order_update_commands(order)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_idempotent(commands)
 
 
 def _shopify_line(item: dict) -> tuple[object, object, str | None, str | None]:
