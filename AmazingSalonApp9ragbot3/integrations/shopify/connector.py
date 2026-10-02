@@ -105,6 +105,24 @@ def _record_shopify_order(order):
     return recorded
 
 
+def _record_saved_appointment_lines(saved, appointment_data, mapped):
+    """A saved fulfilled order that omits its lines draws the sale the appointment already named.
+
+    The mapper posts a pending order and drops that sale. An appointment that is
+    itself fulfilled was already recorded. An open saved order stays unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(appointment_data, dict):
+        return None
+    if saved is mapped or saved is appointment_data:
+        return None
+    if str(appointment_data.get("fulfillment_status") or "").strip().lower() == "fulfilled":
+        return None
+    stamped = _saved_shopify_fulfilled_lines(saved, appointment_data)
+    if stamped is saved:
+        return None
+    return _record_shopify_order(stamped)
+
+
 def _stated_order_id(order):
     """The order number a payload already states. A blank one is absent."""
     if not isinstance(order, dict):
@@ -1118,7 +1136,9 @@ class ShopifyB2BConnector(BaseConnector):
         known = _stated_order_id(appointment_data)
         if known is not None and _stated_order_id(order_data) is None:
             order_data = {**order_data, "id": known}
-        return self.create_order(order_data)
+        saved = self.create_order(order_data)
+        _record_saved_appointment_lines(saved, appointment_data, order_data)
+        return saved
     
     def update_appointment(self, appointment_id: str, appointment_data: Dict) -> Dict:
         """
@@ -1133,7 +1153,9 @@ class ShopifyB2BConnector(BaseConnector):
         """
         _record_shopify_order(appointment_data)
         order_data = self._map_appointment_to_order(appointment_data)
-        return self.update_order(int(appointment_id), order_data)
+        saved = self.update_order(int(appointment_id), order_data)
+        _record_saved_appointment_lines(saved, appointment_data, order_data)
+        return saved
     
     def cancel_appointment(self, appointment_id: str) -> bool:
         """
