@@ -138,6 +138,47 @@ def _saved_shopify_order(saved, order_id):
     return {**saved, "id": order_id}
 
 
+def _order_names_a_sale(order):
+    """True when the order names a sale. Invalid lines stay invalid."""
+    stage = _chain_stage()
+    if not isinstance(order, dict):
+        return False
+    probe = dict(order)
+    if not stage._order_label(probe, "order_number", "name", "id"):
+        probe["id"] = "named"
+    try:
+        return bool(stage.shopify_fulfillment_commands(probe))
+    except stage.StageRejection:
+        return None
+
+
+def _saved_shopify_fulfilled_lines(saved, requested):
+    """A saved fulfilled order that omits its sale lines draws the lines the request already named.
+
+    A saved order that names its own sale keeps those lines. An open or returned order is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    if str(saved.get("fulfillment_status") or "").strip().lower() != "fulfilled":
+        return saved
+    stage = _chain_stage()
+    if stage._shopify_returned(saved):
+        return saved
+    if _order_names_a_sale(saved) is not False:
+        return saved
+    if _order_names_a_sale(requested) is not True:
+        return saved
+    lines = requested.get("line_items")
+    if lines is None:
+        lines = requested.get("items")
+    if not isinstance(lines, list) or not lines:
+        return saved
+    stamped = {**saved, "line_items": list(lines)}
+    if not saved.get("note_attributes") and requested.get("note_attributes"):
+        stamped["note_attributes"] = requested.get("note_attributes")
+    return stamped
+
+
 def _draft_names_itself(draft) -> bool:
     if not isinstance(draft, dict):
         return False
@@ -510,7 +551,8 @@ class ShopifyB2BConnector(BaseConnector):
         response = self.post(self.ENDPOINTS['orders'], {'order': order_data})
         saved = response.get('order', response)
         if saved is not order_data:
-            _record_shopify_order(_saved_shopify_order(saved, _stated_order_id(order_data)))
+            recorded = _saved_shopify_order(saved, _stated_order_id(order_data))
+            _record_shopify_order(_saved_shopify_fulfilled_lines(recorded, order_data))
         return saved
     
     def update_order(self, order_id: int, order_data: Dict) -> Dict[str, Any]:
@@ -529,7 +571,8 @@ class ShopifyB2BConnector(BaseConnector):
         response = self.put(endpoint, {'order': order_data})
         saved = response.get('order', response)
         if saved is not order_data:
-            _record_shopify_order(_saved_shopify_order(saved, order_id))
+            recorded = _saved_shopify_order(saved, order_id)
+            _record_shopify_order(_saved_shopify_fulfilled_lines(recorded, order_data))
         return saved
     
     def cancel_order(self, order_id: int, reason: str = "other") -> Dict[str, Any]:
