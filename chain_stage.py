@@ -498,11 +498,26 @@ def _line_id(value: object) -> str:
     return str(value).strip()
 
 
+def _unique_sku_index(items: list, sku: str) -> int | None:
+    """The line index when exactly one order line names this sku."""
+    if not sku:
+        return None
+    matched = [
+        index
+        for index, item in enumerate(items)
+        if isinstance(item, dict) and _named_sku(item) == sku
+    ]
+    if len(matched) == 1:
+        return matched[0]
+    return None
+
+
 def shopify_refunded_line_commands(order: dict) -> list[dict]:
     """A fully refunded line of a shipped order returns that sale.
 
     A refund quantity below the line quantity stays off the ledger.
     A refund line that omits the sku or the location uses the order line, then the sale already drawn.
+    A refund line that omits its id uses the sku when exactly one order line names it.
     """
     if not isinstance(order, dict):
         raise StageRejection("order is required")
@@ -537,6 +552,8 @@ def shopify_refunded_line_commands(order: dict) -> list[dict]:
                 refund_line.get("line_item_id")
             )
             index = indexes.get(line_key) if line_key else None
+            if index is None:
+                index = _unique_sku_index(items, _named_sku(refund_item) if refund_item else "")
             order_line = items[index] if index is not None and isinstance(items[index], dict) else None
             line = refund_item or order_line
             if not isinstance(line, dict) or index is None:

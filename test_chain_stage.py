@@ -2129,6 +2129,37 @@ class SettlementRouteTests(unittest.TestCase):
             [command["command"] for command in shopify_order_update_commands(partial_omitted)],
             ["fulfill"],
         )
+        omitted_id = {
+            **paid,
+            "financial_status": "partially_refunded",
+            "line_items": [named_line],
+            "refunds": [
+                {
+                    "refund_line_items": [
+                        {"quantity": 1, "line_item": {"sku": "sku-serum-c"}},
+                    ]
+                }
+            ],
+        }
+        omitted_id_commands = shopify_order_update_commands(omitted_id)
+        self.assertEqual([command["command"] for command in omitted_id_commands], ["fulfill", "return_sale"])
+        self.assertEqual(omitted_id_commands[1]["args"]["fulfillment_id"], "9:0:sku-serum-c")
+        ambiguous = {
+            **paid,
+            "financial_status": "partially_refunded",
+            "line_items": [named_line, {**named_line, "id": 101}],
+            "refunds": [
+                {
+                    "refund_line_items": [
+                        {"quantity": 1, "line_item": {"sku": "sku-serum-c"}},
+                    ]
+                }
+            ],
+        }
+        self.assertEqual(
+            [command["command"] for command in shopify_order_update_commands(ambiguous)],
+            ["fulfill", "fulfill"],
+        )
         refunded = shopify_order_update_commands({**paid, "financial_status": "refunded"})
         self.assertEqual([command["command"] for command in refunded], ["return_sale"])
         self.assertEqual(refunded[0]["args"]["return_id"], "return:9:0:sku-serum-c")
