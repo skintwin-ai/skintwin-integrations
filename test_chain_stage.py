@@ -7003,6 +7003,7 @@ class SettlementRouteTests(unittest.TestCase):
                 class _Posted(OpenCartConnector):
                     def __init__(self):
                         self.calls = []
+                        self.product_id = None
 
                     def set_customer(self, first_name, last_name, email, telephone):
                         self.calls.append("customer")
@@ -7010,14 +7011,35 @@ class SettlementRouteTests(unittest.TestCase):
 
                     def add_to_cart(self, product_id, quantity=1, options=None):
                         self.calls.append("cart")
+                        self.product_id = product_id
                         return {}
 
                     def create_order(self):
                         self.calls.append("order")
-                        return {"order_id": 9}
+                        echoes = {
+                            11: {
+                                "order_id": 12,
+                                "status": "shipped",
+                                "products": [product],
+                            },
+                            13: {
+                                "order_id": 13,
+                                "status": "shipped",
+                                "products": [{**product, "milligrams": "lots"}],
+                            },
+                            14: {"order_id": 14},
+                            15: {
+                                "order_id": 12,
+                                "status": "shipped",
+                                "products": [{**product, "location": "johannesburg"}],
+                            },
+                        }
+                        return echoes.get(self.product_id, {"order_id": 9})
 
                     def update_order_history(self, order_id, order_status_id, comment="", notify=False):
                         self.calls.append(("history", order_id, order_status_id))
+                        if order_id == 16:
+                            return {"order_id": 16, "status": "shipped", "products": [product]}
                         return {"order_id": order_id}
 
                 connector = _Posted()
@@ -7161,6 +7183,50 @@ class SettlementRouteTests(unittest.TestCase):
                     )
                 self.assertEqual(connector.calls.count(("history", 11, 1)), 2)
                 self.assertEqual(ledger.read_text(encoding="utf-8"), moved)
+                echoed = connector.create_appointment(
+                    {
+                        "client_email": "echo@example.com",
+                        "items": [{"product_id": 11, "quantity": 1}],
+                    }
+                )
+                self.assertEqual(echoed.get("status"), "shipped")
+                self.assertIn("order", connector.calls)
+                echoed_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "12:0:sku-serum-c"', echoed_text)
+                self.assertIn('"location": "cape-town"', echoed_text)
+                self.assertNotIn("johannesburg", echoed_text)
+                again_echo = connector.create_appointment(
+                    {
+                        "client_email": "echo@example.com",
+                        "items": [{"product_id": 11, "quantity": 1}],
+                    }
+                )
+                self.assertEqual(again_echo.get("order_id"), 12)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                before_bad = connector.calls.count("order")
+                with self.assertRaises(IntegrationError):
+                    connector.create_appointment(
+                        {"items": [{"product_id": 13, "quantity": 1}]}
+                    )
+                self.assertEqual(connector.calls.count("order"), before_bad + 1)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn('"fulfillment_id": "13:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
+                plain = connector.create_appointment(
+                    {"items": [{"product_id": 14, "quantity": 1}]}
+                )
+                self.assertEqual(plain.get("order_id"), 14)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn('"fulfillment_id": "14:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
+                with self.assertRaises(IntegrationError):
+                    connector.create_appointment(
+                        {"items": [{"product_id": 15, "quantity": 1}]}
+                    )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn("johannesburg", ledger.read_text(encoding="utf-8"))
+                outlet = connector.update_appointment("16", {"status": "pending"})
+                self.assertEqual(outlet.get("status"), "shipped")
+                self.assertIn(("history", 16, 1), connector.calls)
+                self.assertIn('"fulfillment_id": "16:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)

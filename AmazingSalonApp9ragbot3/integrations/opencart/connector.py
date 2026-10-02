@@ -458,8 +458,11 @@ class OpenCartConnector(BaseConnector):
         if appointment_data.get('billing_address'):
             self.set_payment_address(appointment_data['billing_address'])
         
-        # Create order
-        return self.create_order()
+        # Create order. A sale on the created order is the same sale a webhook would record.
+        created = self.create_order()
+        if created is not appointment_data:
+            _record_named_opencart_sale(created)
+        return created
     
     def update_appointment(self, appointment_id: str, appointment_data: Dict) -> Dict:
         """
@@ -476,11 +479,14 @@ class OpenCartConnector(BaseConnector):
         # OpenCart doesn't have direct order update
         # Update via order history
         if appointment_data.get('status'):
-            return self.update_order_history(
+            saved = self.update_order_history(
                 order_id=int(appointment_id),
                 order_status_id=appointment_data.get('status_id', 1),
                 comment=appointment_data.get('notes', '')
             )
+            if saved is not appointment_data:
+                _record_named_opencart_sale(saved, appointment_id)
+            return saved
         
         return {'order_id': appointment_id, 'status': 'updated'}
     
