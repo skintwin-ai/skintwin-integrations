@@ -203,10 +203,12 @@ class ShopifyWebhookHandler:
         order_id = data.get('id')
         order_number = data.get('order_number')
         logger.info(f"Shopify order cancelled: #{order_number} (ID: {order_id})")
+        recorded = self._supply_chain("record_shopify_returns", data, "orders/cancelled")
         return {
             'action': 'cancel',
             'order_id': order_id,
-            'order_number': order_number
+            'order_number': order_number,
+            'recorded': recorded,
         }
     
     def on_order_fulfilled(self, data: Dict) -> Dict:

@@ -186,6 +186,27 @@ def shopify_fulfillment_commands(order: dict) -> list[dict]:
     return commands
 
 
+def shopify_return_commands(order: dict) -> list[dict]:
+    """A cancelled order returns the sale its lines would draw."""
+    return _sale_returns(shopify_fulfillment_commands(order))
+
+
+def _sale_returns(fulfillments: list[dict]) -> list[dict]:
+    returns = []
+    for command in fulfillments:
+        fulfillment_id = command["args"]["fulfillment_id"]
+        returns.append(
+            {
+                "command": "return_sale",
+                "args": {
+                    "return_id": f"return:{fulfillment_id}",
+                    "fulfillment_id": fulfillment_id,
+                },
+            }
+        )
+    return returns
+
+
 def shopify_settlement_commands(order: dict) -> list[dict]:
     if not isinstance(order, dict):
         raise StageRejection("order is required")
@@ -252,11 +273,14 @@ def opencart_catalog_commands(product: dict) -> list[dict]:
 
 _OPENCART_SHIPPED = frozenset({"shipped", "complete", "completed", "delivered", "fulfilled"})
 _OPENCART_PAID = frozenset({"paid", "complete", "completed", "processed"})
+_OPENCART_RETURNED = frozenset({"refunded", "cancelled", "canceled", "voided", "reversed"})
 
 
 def opencart_fulfillment_commands(order: dict) -> list[dict]:
     if not isinstance(order, dict):
         raise StageRejection("order is required")
+    if _opencart_returned(order):
+        return []
     status = _opencart_status(order)
     if order.get("fulfilled") is not True and status not in _OPENCART_SHIPPED:
         return []
@@ -286,6 +310,8 @@ def opencart_settlement_commands(order: dict) -> list[dict]:
     """A paid OpenCart order settles the fulfillment its lines already name."""
     if not isinstance(order, dict):
         raise StageRejection("order is required")
+    if _opencart_returned(order):
+        return []
     status = _opencart_status(order)
     if order.get("paid") is not True and status not in _OPENCART_PAID:
         return []
@@ -322,8 +348,27 @@ def opencart_settlement_commands(order: dict) -> list[dict]:
     )
 
 
+def opencart_return_commands(order: dict) -> list[dict]:
+    """A refunded or cancelled order returns the sale its lines name."""
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    if not _opencart_returned(order):
+        return []
+    named = {
+        key: value
+        for key, value in order.items()
+        if key not in {"status", "new_status", "order_status", "returned", "fulfilled", "paid"}
+    }
+    named["status"] = "shipped"
+    return _sale_returns(opencart_fulfillment_commands(named))
+
+
 def _opencart_status(order: dict) -> str:
     return str(order.get("status") or order.get("new_status") or order.get("order_status") or "").strip().lower()
+
+
+def _opencart_returned(order: dict) -> bool:
+    return order.get("returned") is True or _opencart_status(order) in _OPENCART_RETURNED
 
 
 def wix_delivery_commands(booking: dict) -> list[dict]:
@@ -373,7 +418,11 @@ def record_opencart_catalog(product: dict) -> dict | None:
 
 def record_opencart_fulfillments(order: dict) -> dict | None:
     try:
-        commands = opencart_fulfillment_commands(order) + opencart_settlement_commands(order)
+        commands = (
+            opencart_fulfillment_commands(order)
+            + opencart_settlement_commands(order)
+            + opencart_return_commands(order)
+        )
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}
     return _commit_idempotent(commands)
@@ -401,6 +450,14 @@ def record_shopify_fulfillments(order: dict) -> dict | None:
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}
     return _commit_fulfillments(commands)
+
+
+def record_shopify_returns(order: dict) -> dict | None:
+    try:
+        commands = shopify_return_commands(order)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_idempotent(commands)
 
 
 def record_draft_order(draft: dict) -> dict | None:
@@ -486,6 +543,8 @@ def _command_identity(command: dict) -> tuple[str, str] | None:
         return ("fulfill", str(args.get("fulfillment_id")))
     if name == "settle":
         return ("settle", str(args.get("settlement_id")))
+    if name == "return_sale":
+        return ("return_sale", str(args.get("return_id")))
     return None
 
 
