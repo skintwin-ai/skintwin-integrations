@@ -723,7 +723,10 @@ class ShopifyB2BConnector(BaseConnector):
             self.ENDPOINTS['draft_orders'],
             {'draft_order': draft_order_data}
         )
-        return response.get('draft_order', response)
+        saved = response.get('draft_order', response)
+        if saved is not draft_order_data:
+            _record_shopify_draft(saved)
+        return saved
     
     def send_draft_order_invoice(
         self,
