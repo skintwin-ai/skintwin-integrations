@@ -202,9 +202,9 @@ def _commit(request: dict, result: tuple[dict, int]) -> tuple[dict, int]:
 def formula_id_from_shopify(product: dict) -> str | None:
     if not isinstance(product, dict):
         return None
-    direct = product.get("formulaId") or product.get("formula_id")
-    if isinstance(direct, str) and direct.strip():
-        return direct.strip()
+    direct = _named(product, "formulaId", "formula_id")
+    if direct:
+        return direct
     metafields = product.get("metafields")
     if isinstance(metafields, list):
         for field in metafields:
@@ -543,7 +543,7 @@ def opencart_catalog_commands(product: dict) -> list[dict]:
         "title": product.get("name") or product.get("title"),
         "sku": _named_sku(product) or _named(product, "model"),
         "tags": product.get("tags") if product.get("tags") is not None else product.get("tag"),
-        "formula_id": product.get("formula_id") or product.get("formulaId"),
+        "formula_id": _named(product, "formula_id", "formulaId"),
         "variants": product.get("variants"),
     }
     if "metafields" in product:
