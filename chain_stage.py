@@ -536,7 +536,7 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
                         "settlement_id",
                     ),
                     "fulfillment_id": explicit,
-                    "amount_cents": _price_cents(order.get("total_price") or order.get("amount")),
+                    "amount_cents": _price_cents(_first_amount(order.get("total_price"), order.get("amount"))),
                     "currency": currency,
                 },
             }
@@ -553,9 +553,7 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
         location, milligrams, _kind, _practitioner = _shopify_line(item, defaults)
         if location is None and milligrams is None:
             continue
-        quantity = item.get("quantity") or 1
-        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
-            raise StageRejection("quantity must be a positive integer")
+        quantity = _quantity_or_one(item.get("quantity"))
         commands.append(
             {
                 "command": "settle",
@@ -625,15 +623,15 @@ def opencart_settlement_commands(order: dict) -> list[dict]:
         if not isinstance(item, dict):
             raise StageRejection("each product must be an object")
         price = item.get("price")
-        quantity = item.get("quantity") or 1
-        if price is None and item.get("total") is not None:
+        quantity = item.get("quantity")
+        if _missing_amount(price) and not _missing_amount(item.get("total")):
             price = item.get("total")
             quantity = 1
-        if price is None:
+        if _missing_amount(price):
             continue
         line = _opencart_identity(item)
         line["price"] = price
-        line["quantity"] = _quantity(quantity)
+        line["quantity"] = _quantity_or_one(quantity)
         items.append(line)
     return shopify_settlement_commands(
         {
@@ -994,6 +992,29 @@ def _unrecorded(commands: list[dict]) -> list[dict] | None:
         if prior != command["args"]:
             return None
     return fresh
+
+
+def _first_amount(*values: object) -> object:
+    """A present amount wins. A blank one falls through to the next amount."""
+    for value in values:
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            continue
+        if value:
+            return value
+    return None
+
+
+def _quantity_or_one(value: object) -> int:
+    """A missing or blank quantity is one. A present count is kept."""
+    if isinstance(value, str):
+        if not value.strip():
+            value = 1
+    elif not value:
+        value = 1
+    return _quantity(value)
 
 
 def _quantity(value: object) -> int:

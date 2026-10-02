@@ -4116,5 +4116,275 @@ class SettlementRouteTests(unittest.TestCase):
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
 
+    def test_a_blank_price_records_the_named_sale_once(self) -> None:
+        preferred = shopify_settlement_commands(
+            {
+                "order_number": 9,
+                "currency": "USD",
+                "line_items": [
+                    {
+                        "sku": "sku-serum-c",
+                        "price": "10.00",
+                        "quantity": 2,
+                        "location": "cape-town",
+                        "milligrams": 2000,
+                    }
+                ],
+            }
+        )
+        self.assertEqual(preferred[0]["args"]["amount_cents"], 2000)
+        self.assertEqual(preferred[0]["args"]["fulfillment_id"], "9:0:sku-serum-c")
+        counted = shopify_settlement_commands(
+            {
+                "order_number": 9,
+                "currency": "USD",
+                "line_items": [
+                    {
+                        "sku": "sku-serum-c",
+                        "price": "10.00",
+                        "quantity": "  ",
+                        "location": "cape-town",
+                        "milligrams": 2000,
+                    }
+                ],
+            }
+        )
+        self.assertEqual(counted[0]["args"]["amount_cents"], 1000)
+        self.assertEqual(counted[0]["args"]["fulfillment_id"], "9:0:sku-serum-c")
+        self.assertEqual(
+            shopify_settlement_commands(
+                {
+                    "order_number": 9,
+                    "currency": "USD",
+                    "line_items": [{"sku": "sku-serum-c", "price": "10.00", "quantity": "  "}],
+                }
+            ),
+            [],
+        )
+        kept = shopify_settlement_commands(
+            {
+                "order_number": 9,
+                "fulfillment_id": "sale-1",
+                "total_price": "12.00",
+                "amount": "10.00",
+                "currency": "USD",
+            }
+        )
+        self.assertEqual(kept[0]["args"]["amount_cents"], 1200)
+        fallen = shopify_settlement_commands(
+            {
+                "order_number": 9,
+                "fulfillment_id": "sale-1",
+                "total_price": "  ",
+                "amount": "10.00",
+                "currency": "USD",
+            }
+        )
+        self.assertEqual(fallen[0]["args"]["amount_cents"], 1000)
+        self.assertEqual(fallen[0]["args"]["fulfillment_id"], "sale-1")
+        with self.assertRaises(Exception):
+            shopify_settlement_commands(
+                {
+                    "order_number": 9,
+                    "fulfillment_id": "sale-1",
+                    "total_price": "  ",
+                    "amount": "  ",
+                    "currency": "USD",
+                }
+            )
+        priced = opencart_settlement_commands(
+            {
+                "order_id": 4,
+                "status": "paid",
+                "currency_code": "USD",
+                "products": [
+                    {
+                        "sku": "sku-serum-c",
+                        "price": "10.00",
+                        "quantity": 2,
+                        "location": "cape-town",
+                        "milligrams": 2000,
+                    }
+                ],
+            }
+        )
+        self.assertEqual(priced[0]["args"]["amount_cents"], 2000)
+        totaled = opencart_settlement_commands(
+            {
+                "order_id": 4,
+                "status": "paid",
+                "currency_code": "USD",
+                "products": [
+                    {
+                        "sku": "sku-serum-c",
+                        "price": "  ",
+                        "total": "10.00",
+                        "quantity": 3,
+                        "location": "cape-town",
+                        "milligrams": 2000,
+                    }
+                ],
+            }
+        )
+        self.assertEqual(totaled[0]["args"]["amount_cents"], 1000)
+        self.assertEqual(totaled[0]["args"]["fulfillment_id"], "4:0:sku-serum-c")
+        self.assertEqual(
+            opencart_settlement_commands(
+                {
+                    "order_id": 4,
+                    "status": "paid",
+                    "products": [
+                        {
+                            "sku": "sku-serum-c",
+                            "price": "  ",
+                            "total": "  ",
+                            "location": "cape-town",
+                            "milligrams": 2000,
+                        }
+                    ],
+                }
+            ),
+            [],
+        )
+        self.assertEqual(
+            opencart_settlement_commands(
+                {"order_id": 4, "status": "pending", "currency_code": "USD", "total": "10.00"}
+            ),
+            [],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                unnamed = record_shopify_settlement(
+                    {"order_number": 9, "currency": "USD", "line_items": [{"sku": "sku-serum-c", "price": "10.00"}]}
+                )
+                self.assertIsNone(unnamed)
+                self.assertFalse(ledger.exists())
+                rejected = record_shopify_settlement(
+                    {
+                        "order_number": 9,
+                        "fulfillment_id": "order-retail",
+                        "total_price": "  ",
+                        "amount": "  ",
+                        "currency": "USD",
+                    }
+                )
+                self.assertFalse(rejected["ok"])
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "cleanser",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "order-retail",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                order = {
+                    "order_number": 9,
+                    "fulfillment_id": "order-retail",
+                    "total_price": "  ",
+                    "amount": "10.00",
+                    "currency": "USD",
+                    "settlement_id": "pay-blank-price",
+                }
+                recorded = record_shopify_settlement(order)
+                self.assertEqual(recorded, {"ok": True, "count": 1})
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn("pay-blank-price", text)
+                again = record_shopify_settlement(order)
+                self.assertEqual(again["ok"], False)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
+
+
 if __name__ == "__main__":
     unittest.main()
