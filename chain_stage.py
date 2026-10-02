@@ -680,7 +680,7 @@ def _opencart_identity(item: dict) -> dict:
         "milligrams": item.get("milligrams"),
         "properties": properties,
         "kind": item.get("kind"),
-        "practitioner_id": item.get("practitioner_id"),
+        "practitioner_id": _named(item, "practitionerId", "practitioner_id") or None,
     }
 
 
@@ -797,7 +797,13 @@ def record_shopify_order_update(order: dict) -> dict | None:
     return _commit_idempotent(commands)
 
 
-_LINE_ATTRIBUTES = ("location", "milligrams", "kind", "practitioner_id")
+_LINE_ATTRIBUTES = {
+    "location": "location",
+    "milligrams": "milligrams",
+    "kind": "kind",
+    "practitioner_id": "practitioner_id",
+    "practitionerid": "practitioner_id",
+}
 
 
 def _attribute_values(entries: object) -> dict:
@@ -805,6 +811,7 @@ def _attribute_values(entries: object) -> dict:
 
     REST payloads use name. GraphQL custom attributes use key.
     A present name wins, so a gift name does not fall through to a location key.
+    practitionerId is the same practitioner as practitioner_id.
     """
     found: dict[str, object] = {}
     if not isinstance(entries, list):
@@ -813,9 +820,10 @@ def _attribute_values(entries: object) -> dict:
         if not isinstance(prop, dict):
             continue
         name = str(prop.get("name") or prop.get("key") or "").strip().lower()
-        if name not in _LINE_ATTRIBUTES or name in found:
+        canonical = _LINE_ATTRIBUTES.get(name)
+        if canonical is None or canonical in found:
             continue
-        found[name] = prop.get("value")
+        found[canonical] = prop.get("value")
     return found
 
 
@@ -828,17 +836,20 @@ def _shopify_line(item: dict, defaults: dict | None = None) -> tuple[object, obj
     defaults = defaults or {}
     location = item.get("location")
     milligrams = item.get("milligrams")
-    kind = None
-    practitioner = item.get("practitioner_id")
+    kind = item.get("kind")
+    kind = kind.strip() if isinstance(kind, str) else None
+    if not kind:
+        kind = None
+    practitioner = _named(item, "practitionerId", "practitioner_id")
     for name, value in _attribute_values(item.get("properties")).items():
         if name == "location" and not location:
             location = value
         elif name == "milligrams" and milligrams is None:
             milligrams = value
-        elif name == "kind" and isinstance(value, str):
-            kind = value.strip()
+        elif name == "kind" and kind is None and isinstance(value, str):
+            kind = value.strip() or None
         elif name == "practitioner_id" and not practitioner:
-            practitioner = value
+            practitioner = value.strip() if isinstance(value, str) else value
     if not location and defaults.get("location"):
         location = defaults["location"]
     if milligrams is None and "milligrams" in defaults:
@@ -847,7 +858,9 @@ def _shopify_line(item: dict, defaults: dict | None = None) -> tuple[object, obj
         kind = defaults["kind"].strip()
     if not practitioner and defaults.get("practitioner_id"):
         practitioner = defaults["practitioner_id"]
-    return location, milligrams, kind, practitioner if isinstance(practitioner, str) else None
+    if not isinstance(practitioner, str):
+        return location, milligrams, kind, None
+    return location, milligrams, kind, practitioner.strip() or None
 
 
 def _milligrams(value: object) -> int:
