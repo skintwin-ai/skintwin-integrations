@@ -113,6 +113,37 @@ def _record_shopify_draft(draft):
     return recorded
 
 
+def _draft_label(draft):
+    """The order id a draft already states. A blank one is absent."""
+    if not isinstance(draft, dict):
+        return None
+    for key in ("order_id", "name", "id"):
+        value = draft.get(key)
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            continue
+        if value and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _saved_shopify_draft(saved, requested):
+    """A completed draft that omits its id records the sale under the id the request already states.
+
+    A saved draft that names itself keeps that id. An open saved draft is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or _draft_names_itself(saved):
+        return saved
+    if str(saved.get("status") or "").strip().lower() != "completed":
+        return saved
+    known = _draft_label(requested)
+    if known is None:
+        return saved
+    return {**saved, "id": known}
+
+
 def _order_names_itself(order) -> bool:
     if not isinstance(order, dict):
         return False
@@ -792,7 +823,7 @@ class ShopifyB2BConnector(BaseConnector):
         )
         saved = response.get('draft_order', response)
         if saved is not draft_order_data:
-            _record_shopify_draft(saved)
+            _record_shopify_draft(_saved_shopify_draft(saved, draft_order_data))
         return saved
     
     def send_draft_order_invoice(

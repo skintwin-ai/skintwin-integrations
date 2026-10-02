@@ -10549,6 +10549,221 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_completed_draft_that_omits_its_id_records_the_request_sale(self) -> None:
+        line = {
+            "sku": "sku-serum-c",
+            "properties": [
+                {"name": "location", "value": "cape-town"},
+                {"name": "milligrams", "value": "2000"},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationError = importlib.import_module("integrations.common.exceptions").IntegrationError
+                ShopifyB2BConnector = importlib.import_module(
+                    "integrations.shopify.connector"
+                ).ShopifyB2BConnector
+
+                class _Posted(ShopifyB2BConnector):
+                    def __init__(self):
+                        self.posted = []
+                        self.responses = []
+                        self.ENDPOINTS = {"draft_orders": "draft_orders.json"}
+
+                    def post(self, endpoint, data=None):
+                        self.posted.append(endpoint)
+                        return {"draft_order": self.responses.pop(0)}
+
+                connector = _Posted()
+                connector.responses.append(
+                    {
+                        "status": "completed",
+                        "line_items": [
+                            {
+                                "sku": "sku-serum-c",
+                                "properties": [
+                                    {"name": "location", "value": "cape-town"},
+                                    {"name": "milligrams", "value": "lots"},
+                                ],
+                            }
+                        ],
+                    }
+                )
+                with self.assertRaises(IntegrationError):
+                    connector.create_draft_order(
+                        {"status": "open", "id": 3, "order_id": 9, "line_items": [{"sku": "sku-serum-c"}]}
+                    )
+                self.assertEqual(connector.posted, ["draft_orders.json"])
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 8000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "xfer-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 8000,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                connector.responses.append({"status": "completed", "line_items": [line]})
+                created = connector.create_draft_order(
+                    {"status": "open", "id": 3, "order_id": 9, "line_items": [{"sku": "sku-serum-c"}]}
+                )
+                self.assertEqual(created.get("status"), "completed")
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "9:0:sku-serum-c"', text)
+                self.assertNotIn('"fulfillment_id": "3:0:sku-serum-c"', text)
+                self.assertIn('"transfer_id": "xfer-cape-town"', text)
+                connector.responses.append({"status": "completed", "line_items": [line]})
+                connector.create_draft_order(
+                    {"status": "open", "id": 3, "order_id": 9, "line_items": [{"sku": "sku-serum-c"}]}
+                )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                connector.responses.append(
+                    {"status": "completed", "id": 11, "order_id": 11, "line_items": [line]}
+                )
+                named = connector.create_draft_order(
+                    {"status": "open", "id": 3, "order_id": 9, "line_items": [{"sku": "sku-serum-c"}]}
+                )
+                self.assertEqual(named.get("order_id"), 11)
+                named_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "11:0:sku-serum-c"', named_text)
+                connector.responses.append({"status": "completed", "line_items": [line]})
+                connector.create_draft_order(
+                    {"status": "open", "id": 4, "line_items": [{"sku": "sku-serum-c"}]}
+                )
+                four = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "4:0:sku-serum-c"', four)
+                connector.responses.append({"status": "open", "line_items": [line]})
+                opened = connector.create_draft_order(
+                    {"status": "open", "id": 5, "order_id": 5, "line_items": [{"sku": "sku-serum-c"}]}
+                )
+                self.assertEqual(opened.get("status"), "open")
+                self.assertNotIn('"fulfillment_id": "5:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
+                self.assertEqual(ledger.read_text(encoding="utf-8"), four)
+                connector.responses.append({"status": "completed", "line_items": [line]})
+                with self.assertRaises(IntegrationError) as missing:
+                    connector.create_draft_order({"status": "open", "line_items": [{"sku": "sku-serum-c"}]})
+                self.assertIn("order number", str(missing.exception))
+                self.assertEqual(ledger.read_text(encoding="utf-8"), four)
+                connector.responses.append(
+                    {
+                        "status": "completed",
+                        "line_items": [
+                            {
+                                "sku": "sku-serum-c",
+                                "location": "johannesburg",
+                                "milligrams": 2000,
+                            }
+                        ],
+                    }
+                )
+                with self.assertRaises(IntegrationError) as changed:
+                    connector.create_draft_order(
+                        {"status": "open", "id": 3, "order_id": 9, "line_items": [{"sku": "sku-serum-c"}]}
+                    )
+                self.assertIn("already exists", str(changed.exception))
+                self.assertNotIn("johannesburg", ledger.read_text(encoding="utf-8"))
+                self.assertEqual(ledger.read_text(encoding="utf-8"), four)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
 
 if __name__ == "__main__":
     unittest.main()
