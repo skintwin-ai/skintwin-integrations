@@ -136,6 +136,9 @@ def _cents(data: dict) -> int:
 
 
 def respond(body: dict) -> tuple[dict, int]:
+    commands = body.get("commands")
+    if isinstance(commands, list):
+        return _respond_many(commands)
     if body.get("command") != "settle":
         return {"ok": False, "error": f"unknown command {body.get('command')}"}, 400
     try:
@@ -143,6 +146,31 @@ def respond(body: dict) -> tuple[dict, int]:
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}, 400
     return _commit(body, ({"ok": True, "artifact": artifact}, 200))
+
+
+def _respond_many(commands: list) -> tuple[dict, int]:
+    """Several settlements of one invoice are one ledger write."""
+    accepted = []
+    try:
+        for command in commands:
+            if not isinstance(command, dict) or command.get("command") != "settle":
+                name = command.get("command") if isinstance(command, dict) else command
+                return {"ok": False, "error": f"unknown command {name}"}, 400
+            artifact = settle(command.get("args") or {})
+            accepted.append({"command": "settle", "args": artifact})
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}, 400
+    if not accepted or os.environ.get("SKINTWIN_CHAIN_SKIP_DISPATCH") == "1":
+        return {"ok": True, "artifact": accepted, "count": len(accepted)}, 200
+    if not os.environ.get("SKINTWIN_CHAIN_LEDGER"):
+        return {"ok": True, "artifact": accepted, "count": len(accepted)}, 200
+    locator = _locator()
+    if locator is None:
+        return {"ok": False, "error": "supply-chain hub is not present"}, 400
+    error = locator.commit_commands(accepted)
+    if error:
+        return {"ok": False, "error": error}, 400
+    return {"ok": True, "artifact": accepted, "count": len(accepted)}, 200
 
 
 def _text(value: object, label: str) -> str:
