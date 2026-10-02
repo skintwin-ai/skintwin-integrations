@@ -397,11 +397,13 @@ class WixBookingsConnector(BaseConnector):
             
             created_booking = response.get('booking', response)
             logger.info(f"Created Wix booking: {created_booking.get('id')}")
-            
-            return created_booking
         except Exception as e:
             logger.error(f"Failed to create Wix booking: {e}")
             raise IntegrationError(f"Failed to create booking: {e}", platform=self.PLATFORM_NAME)
+        # Wix is already called. A delivery on the created booking is the same transfer a webhook would record.
+        if created_booking is not appointment_data:
+            _record_named_wix_delivery(created_booking)
+        return created_booking
     
     def update_appointment(self, appointment_id: str, appointment_data: Dict) -> Dict:
         """
@@ -431,11 +433,13 @@ class WixBookingsConnector(BaseConnector):
             
             updated_booking = response.get('booking', response)
             logger.info(f"Updated Wix booking: {appointment_id}")
-            
-            return updated_booking
         except Exception as e:
             logger.error(f"Failed to update Wix booking {appointment_id}: {e}")
             raise IntegrationError(f"Failed to update booking: {e}", platform=self.PLATFORM_NAME)
+        # Wix is already called. A delivery on the updated booking is the same transfer a webhook would record.
+        if updated_booking is not appointment_data:
+            _record_named_wix_delivery(updated_booking, appointment_id)
+        return updated_booking
     
     def cancel_appointment(self, appointment_id: str) -> bool:
         """

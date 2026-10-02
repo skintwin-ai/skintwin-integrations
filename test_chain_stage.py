@@ -6509,9 +6509,35 @@ class SettlementRouteTests(unittest.TestCase):
                         self.posted = []
                         self.updated = []
 
+                    def _service_id(self, body):
+                        return ((body.get("bookedEntity") or {}).get("slot") or {}).get("serviceId")
+
                     def post(self, endpoint, data=None):
                         self.posted.append(endpoint)
                         body = (data or {}).get("booking", {})
+                        echoes = {
+                            "echo-facial": {
+                                "id": "book-echo",
+                                "services": [{"delivery": delivery}],
+                            },
+                            "bad-facial": {
+                                "id": "book-bad-saved",
+                                "services": [{"delivery": {**delivery, "milligrams": "lots"}}],
+                            },
+                            "plain-facial": {
+                                "id": "book-plain",
+                                "services": [{"name": "Facial"}],
+                            },
+                            "moved-facial": {
+                                "id": "book-echo",
+                                "services": [
+                                    {"delivery": {**delivery, "destination": "johannesburg"}}
+                                ],
+                            },
+                        }
+                        saved = echoes.get(self._service_id(body))
+                        if saved is not None:
+                            return {"booking": saved}
                         return {"booking": {**body, "id": body.get("id") or "wix-created"}}
 
                     def get(self, endpoint, params=None):
@@ -6519,7 +6545,10 @@ class SettlementRouteTests(unittest.TestCase):
 
                     def put(self, endpoint, data=None):
                         self.updated.append(endpoint)
-                        return {"booking": (data or {}).get("booking", {})}
+                        body = (data or {}).get("booking", {})
+                        if body.get("id") == "book-outlet":
+                            return {"booking": {"id": "book-outlet", "services": [{"delivery": delivery}]}}
+                        return {"booking": body}
 
                 connector = _Posted()
                 opened = connector.create_appointment(
@@ -6659,6 +6688,47 @@ class SettlementRouteTests(unittest.TestCase):
                     ["/bookings/v2/bookings/book-2", "/bookings/v2/bookings/book-2"],
                 )
                 self.assertEqual(ledger.read_text(encoding="utf-8"), moved)
+                echoed = connector.create_appointment(
+                    {"service_id": "echo-facial", "services": [{"name": "Facial"}]}
+                )
+                self.assertEqual(echoed.get("id"), "book-echo")
+                self.assertIn("/bookings/v2/bookings", connector.posted)
+                echoed_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "book-echo:0"', echoed_text)
+                self.assertIn('"destination": "cape-town"', echoed_text)
+                self.assertNotIn("johannesburg", echoed_text)
+                again_echo = connector.create_appointment(
+                    {"service_id": "echo-facial", "services": [{"name": "Facial"}]}
+                )
+                self.assertEqual(again_echo.get("id"), "book-echo")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                before_bad = list(connector.posted)
+                with self.assertRaises(IntegrationError):
+                    connector.create_appointment(
+                        {"service_id": "bad-facial", "services": [{"name": "Facial"}]}
+                    )
+                self.assertEqual(len(connector.posted), len(before_bad) + 1)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn("book-bad-saved", ledger.read_text(encoding="utf-8"))
+                plain = connector.create_appointment(
+                    {"service_id": "plain-facial", "services": [{"name": "Facial"}]}
+                )
+                self.assertEqual(plain.get("id"), "book-plain")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn("book-plain", ledger.read_text(encoding="utf-8"))
+                with self.assertRaises(IntegrationError):
+                    connector.create_appointment(
+                        {"service_id": "moved-facial", "services": [{"name": "Facial"}]}
+                    )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn("johannesburg", ledger.read_text(encoding="utf-8"))
+                outlet = connector.update_appointment(
+                    "book-outlet",
+                    {"services": [{"name": "Facial"}]},
+                )
+                self.assertEqual(outlet.get("id"), "book-outlet")
+                self.assertIn("/bookings/v2/bookings/book-outlet", connector.updated)
+                self.assertIn('"transfer_id": "book-outlet:0"', ledger.read_text(encoding="utf-8"))
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
