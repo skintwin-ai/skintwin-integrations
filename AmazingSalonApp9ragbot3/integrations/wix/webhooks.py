@@ -146,13 +146,15 @@ class WixWebhookHandler:
         """Handle booking created event."""
         booking = data.get('booking', data)
         logger.info(f"Booking created: {booking.get('id')}")
-        return {'action': 'create', 'booking_id': booking.get('id')}
+        recorded = self._supply_chain("record_wix_deliveries", booking, "booking/created")
+        return {'action': 'create', 'booking_id': booking.get('id'), 'recorded': recorded}
     
     def on_booking_updated(self, data: Dict) -> Dict:
         """Handle booking updated event."""
         booking = data.get('booking', data)
         logger.info(f"Booking updated: {booking.get('id')}")
-        return {'action': 'update', 'booking_id': booking.get('id')}
+        recorded = self._supply_chain("record_wix_deliveries", booking, "booking/updated")
+        return {'action': 'update', 'booking_id': booking.get('id'), 'recorded': recorded}
     
     def on_booking_cancelled(self, data: Dict) -> Dict:
         """Handle booking cancelled event."""
