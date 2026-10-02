@@ -118,11 +118,12 @@ def settlement_for_payment(data: dict) -> tuple[dict, int] | None:
         cents = _cents(data)
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}, 400
+    settlement_id = _named(data, "settlement_id", "settlementId") or f"pay-{fulfillment_id}"
     return respond(
         {
             "command": "settle",
             "args": {
-                "settlement_id": _named(data, "settlement_id", "settlementId"),
+                "settlement_id": settlement_id,
                 "fulfillment_id": fulfillment_id,
                 "amount_cents": cents,
                 "currency": _currency_text(data.get("currency")) or "USD",
