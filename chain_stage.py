@@ -192,21 +192,35 @@ def formula_id_from_shopify(product: dict) -> str | None:
     return None
 
 
+def _catalog_skus(product: dict, name: str) -> list[str]:
+    """Each variant that names a sku is its own catalog entry. A blank sku is not one."""
+    variants = product.get("variants") if isinstance(product.get("variants"), list) else []
+    skus: list[str] = []
+    seen: set[str] = set()
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        sku = variant.get("sku")
+        if not isinstance(sku, str) or not sku.strip() or sku.strip() in seen:
+            continue
+        seen.add(sku.strip())
+        skus.append(sku.strip())
+    if skus:
+        return skus
+    return [_text(product.get("sku") or name, "sku")]
+
+
 def shopify_catalog_commands(product: dict) -> list[dict]:
     formula_id = formula_id_from_shopify(product)
     if formula_id is None:
         return []
     name = _text(product.get("title") or product.get("name"), "name")
-    variants = product.get("variants") if isinstance(product.get("variants"), list) else []
-    sku = ""
-    if variants and isinstance(variants[0], dict):
-        sku = variants[0].get("sku") or ""
-    sku = _text(sku or product.get("sku") or name, "sku")
     return [
         {
             "command": "catalog_sku",
             "args": {"sku_id": sku, "formula_id": formula_id, "name": name},
         }
+        for sku in _catalog_skus(product, name)
     ]
 
 

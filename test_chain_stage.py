@@ -126,6 +126,103 @@ class SettlementRouteTests(unittest.TestCase):
         self.assertEqual(commands[0]["args"]["formula_id"], "serum-c")
         self.assertEqual(commands[0]["args"]["sku_id"], "sku-serum-c")
         self.assertEqual(shopify_catalog_commands({"title": "Cleanser", "tags": "retail"}), [])
+        sized = shopify_catalog_commands(
+            {
+                "title": "Gentle cleanser",
+                "tags": "formula:cleanser",
+                "variants": [
+                    {"sku": "sku-cleanser-30"},
+                    {"sku": " "},
+                    {"sku": "sku-cleanser-30"},
+                    {"sku": "sku-cleanser-50"},
+                ],
+            }
+        )
+        self.assertEqual([command["args"]["sku_id"] for command in sized], ["sku-cleanser-30", "sku-cleanser-50"])
+        self.assertEqual(
+            shopify_catalog_commands(
+                {"title": "Gentle cleanser", "tags": "formula:cleanser", "variants": [{"sku": " "}]}
+            )[0]["args"]["sku_id"],
+            "Gentle cleanser",
+        )
+        self.assertEqual(
+            shopify_catalog_commands(
+                {"title": "Cleanser", "tags": "retail", "variants": [{"sku": "sku-a"}, {"sku": "sku-b"}]}
+            ),
+            [],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                unnamed = record_shopify_catalog(
+                    {"title": "Cleanser", "tags": "retail", "variants": [{"sku": "sku-a"}, {"sku": "sku-b"}]}
+                )
+                self.assertIsNone(unnamed)
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 8000]],
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                recorded = record_shopify_catalog(
+                    {
+                        "title": "Gentle cleanser",
+                        "tags": "formula:cleanser",
+                        "variants": [{"sku": "sku-cleanser-30"}, {"sku": "sku-cleanser-50"}],
+                    }
+                )
+                self.assertTrue(recorded["ok"])
+                self.assertEqual(recorded["count"], 2)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertEqual(text.count("sku-cleanser-30"), 1)
+                self.assertEqual(text.count("sku-cleanser-50"), 1)
+                again = record_shopify_catalog(
+                    {
+                        "title": "Gentle cleanser",
+                        "tags": "formula:cleanser",
+                        "variants": [{"sku": "sku-cleanser-30"}, {"sku": "sku-cleanser-50"}],
+                    }
+                )
+                self.assertTrue(again["ok"])
+                self.assertEqual(again["count"], 0)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
     def test_a_repeated_formula_tag_catalogs_the_sku_once(self) -> None:
         plain = {"title": "Cleanser", "tags": "retail", "variants": [{"sku": "sku-cleanser"}]}
