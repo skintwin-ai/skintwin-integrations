@@ -6452,6 +6452,217 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_posted_appointment_records_the_named_sale_once(self) -> None:
+        line = {
+            "sku": "sku-serum-c",
+            "quantity": 1,
+            "price": "25.00",
+            "location": "cape-town",
+            "milligrams": 2000,
+        }
+        order = {
+            "order_number": 9,
+            "fulfillment_status": "fulfilled",
+            "financial_status": "paid",
+            "currency": "ZAR",
+            "line_items": [line],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationError = importlib.import_module("integrations.common.exceptions").IntegrationError
+                ShopifyB2BConnector = importlib.import_module(
+                    "integrations.shopify.connector"
+                ).ShopifyB2BConnector
+
+                class _Posted(ShopifyB2BConnector):
+                    def __init__(self):
+                        self.posted = []
+                        self.updated = []
+
+                    def post(self, endpoint, data=None):
+                        body = (data or {}).get("order", {})
+                        self.posted.append(body.get("financial_status"))
+                        return {"order": body}
+
+                    def put(self, endpoint, data=None):
+                        self.updated.append(endpoint)
+                        return {"order": (data or {}).get("order", {})}
+
+                connector = _Posted()
+                opened = connector.create_appointment(
+                    {
+                        "client_email": "adaeze.obi@example.com",
+                        "items": [{"name": "Signature Facial", "quantity": 1, "price": 250}],
+                    }
+                )
+                self.assertEqual(opened.get("financial_status"), "pending")
+                self.assertEqual(connector.posted, ["pending"])
+                self.assertFalse(ledger.exists())
+                with self.assertRaises(IntegrationError):
+                    connector.create_appointment(
+                        {
+                            "order_number": 9,
+                            "fulfillment_status": "fulfilled",
+                            "line_items": [{**line, "milligrams": "lots"}],
+                        }
+                    )
+                self.assertEqual(connector.posted, ["pending"])
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {
+                                        "ingredient_id": "glycerin",
+                                        "inci": "Glycerin",
+                                        "cas": "56-81-5",
+                                    },
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 8000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 8000,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                created = connector.create_appointment(order)
+                self.assertEqual(created.get("financial_status"), "pending")
+                self.assertEqual(connector.posted, ["pending", "pending"])
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "9:0:sku-serum-c"', text)
+                self.assertIn('"milligrams": 2000', text)
+                self.assertIn('"amount_cents": 2500', text)
+                self.assertIn('"currency": "ZAR"', text)
+                again = connector.create_appointment(order)
+                self.assertEqual(connector.posted, ["pending", "pending", "pending"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                with self.assertRaises(IntegrationError):
+                    connector.create_appointment(
+                        {**order, "line_items": [{**line, "location": "johannesburg"}]}
+                    )
+                self.assertEqual(connector.posted, ["pending", "pending", "pending"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                updated = connector.update_appointment(
+                    "10",
+                    {**order, "order_number": 10},
+                )
+                self.assertEqual(updated.get("financial_status"), "pending")
+                self.assertEqual(connector.updated, ["orders/10.json"])
+                moved = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "10:0:sku-serum-c"', moved)
+                repeated = connector.update_appointment(
+                    "10",
+                    {**order, "order_number": 10},
+                )
+                self.assertEqual(connector.updated, ["orders/10.json", "orders/10.json"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), moved)
+                with self.assertRaises(IntegrationError):
+                    connector.update_appointment(
+                        "10",
+                        {
+                            **order,
+                            "order_number": 10,
+                            "line_items": [{**line, "location": "johannesburg"}],
+                        },
+                    )
+                self.assertEqual(connector.updated, ["orders/10.json", "orders/10.json"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), moved)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
 
 if __name__ == "__main__":
     unittest.main()

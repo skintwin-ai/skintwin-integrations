@@ -855,7 +855,8 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Created order data
         """
-        # Map appointment data to Shopify order format
+        # The mapper posts a pending order and drops a sale this payload already names.
+        _record_shopify_order(appointment_data)
         order_data = self._map_appointment_to_order(appointment_data)
         return self.create_order(order_data)
     
@@ -870,6 +871,7 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Updated order data
         """
+        _record_shopify_order(appointment_data)
         order_data = self._map_appointment_to_order(appointment_data)
         return self.update_order(int(appointment_id), order_data)
     
