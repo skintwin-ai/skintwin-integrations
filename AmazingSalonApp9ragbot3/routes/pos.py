@@ -15,6 +15,27 @@ from utils.config_utils import ConfigManager
 
 bp = Blueprint('pos', __name__)
 
+
+def _settle_chain_payment(payment, amount):
+    """Record settlement when this payment closes a supply-chain fulfillment."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from chain_stage import settlement_for_payment, use_shared_ledger
+
+    use_shared_ledger()
+    payload = {
+        "fulfillment_id": payment.get("fulfillment_id"),
+        "settlement_id": payment.get("settlement_id"),
+        "amount_cents": payment.get("amount_cents"),
+        "amount": amount,
+        "currency": payment.get("currency") or "USD",
+    }
+    return settlement_for_payment(payload)
+
 # Initialize Stripe with the API key from ConfigManager or fallback to environment variable
 stripe_secret_key = ConfigManager.get_stripe_secret_key() or os.environ.get('STRIPE_SECRET_KEY')
 if stripe_secret_key:
@@ -335,6 +356,17 @@ def create_transaction_route():
         payment_method_id = request.form.get('payment_method_id')
         points_to_redeem = int(request.form.get('points_to_redeem', 0))
         payment_provider = request.form.get('payment_provider', 'stripe')
+
+    payment = data if request.is_json else request.form
+    settled = _settle_chain_payment(payment, amount)
+    if settled is not None:
+        body, status = settled
+        if status != 200:
+            message = body.get("error", "settlement rejected")
+            if request.is_json:
+                return jsonify(body), status
+            flash(message, "error")
+            return redirect(url_for("pos.index"))
     
     # Get loyalty points conversion ratio from configuration
     points_to_dollar_ratio = ConfigManager.get_loyalty_points_ratio()

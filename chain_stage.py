@@ -26,6 +26,40 @@ def settle(args: dict) -> dict:
     }
 
 
+def settlement_for_payment(data: dict) -> tuple[dict, int] | None:
+    """Settle a payment that names a fulfillment before the processor runs."""
+    if not isinstance(data, dict) or not data.get("fulfillment_id"):
+        return None
+    try:
+        cents = _cents(data)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}, 400
+    return respond(
+        {
+            "command": "settle",
+            "args": {
+                "settlement_id": data.get("settlement_id") or "",
+                "fulfillment_id": data.get("fulfillment_id") or "",
+                "amount_cents": cents,
+                "currency": data.get("currency") or "USD",
+            },
+        }
+    )
+
+
+def _cents(data: dict) -> int:
+    amount_cents = data.get("amount_cents")
+    if isinstance(amount_cents, int) and not isinstance(amount_cents, bool):
+        return amount_cents
+    amount = data.get("amount")
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        raise StageRejection("amount_cents is required")
+    cents = int(round(float(amount) * 100))
+    if cents < 1:
+        raise StageRejection("amount_cents must be a positive integer")
+    return cents
+
+
 def respond(body: dict) -> tuple[dict, int]:
     if body.get("command") != "settle":
         return {"ok": False, "error": f"unknown command {body.get('command')}"}, 400
@@ -72,6 +106,14 @@ def _commit(request: dict, result: tuple[dict, int]) -> tuple[dict, int]:
             message = None
         return {"ok": False, "error": message or completed.stderr or "ledger rejected the command"}, 400
     return result
+
+
+def use_shared_ledger() -> None:
+    hub = _hub_root()
+    if hub is None:
+        return
+    os.environ.setdefault("SKINTWIN_HUB_ROOT", str(hub))
+    os.environ.setdefault("SKINTWIN_CHAIN_LEDGER", str(hub / "var" / "supply-chain.jsonl"))
 
 
 def _hub_root() -> Path | None:
