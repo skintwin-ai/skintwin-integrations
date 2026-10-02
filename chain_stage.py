@@ -91,7 +91,7 @@ def paystack_settlement(transaction: dict) -> dict | None:
     cents = int(amount) if isinstance(amount, int) else int(round(float(amount)))
     if cents < 1:
         return None
-    currency = data.get("currency") or metadata.get("currency") or "NGN"
+    currency = _currency_text(data.get("currency")) or _currency_text(metadata.get("currency")) or "NGN"
     return {
         "fulfillment_id": fulfillment_id.strip(),
         "settlement_id": settlement_id.strip(),
@@ -125,7 +125,7 @@ def settlement_for_payment(data: dict) -> tuple[dict, int] | None:
                 "settlement_id": _named(data, "settlement_id", "settlementId"),
                 "fulfillment_id": fulfillment_id,
                 "amount_cents": cents,
-                "currency": data.get("currency") or "USD",
+                "currency": _currency_text(data.get("currency")) or "USD",
             },
         }
     )
@@ -247,6 +247,13 @@ def _named(record: object, *keys: str) -> str:
         value = record.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+    return ""
+
+
+def _currency_text(value: object) -> str:
+    """A blank currency is absent. A present code is kept as written."""
+    if isinstance(value, str) and value.strip():
+        return value.strip()
     return ""
 
 
@@ -516,7 +523,7 @@ def _sale_returns(fulfillments: list[dict]) -> list[dict]:
 def shopify_settlement_commands(order: dict) -> list[dict]:
     if not isinstance(order, dict):
         raise StageRejection("order is required")
-    currency = order.get("currency") or "USD"
+    currency = _currency_text(order.get("currency")) or "USD"
     explicit = _named(order, "fulfillment_id", "fulfillmentId")
     if explicit:
         order_number = _order_label(order, "order_number", "id") or explicit
@@ -631,7 +638,11 @@ def opencart_settlement_commands(order: dict) -> list[dict]:
     return shopify_settlement_commands(
         {
             "order_number": _order_label(order, "order_id", "order_number", "id"),
-            "currency": order.get("currency_code") or order.get("currency") or "USD",
+            "currency": (
+                _currency_text(order.get("currency_code"))
+                or _currency_text(order.get("currency"))
+                or "USD"
+            ),
             "total_price": order.get("total"),
             "fulfillment_id": _named(order, "fulfillment_id", "fulfillmentId"),
             "settlement_id": _named(order, "settlement_id", "settlementId"),
