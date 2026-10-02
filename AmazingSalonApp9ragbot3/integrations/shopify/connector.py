@@ -28,6 +28,22 @@ from ..common.models import (
 logger = logging.getLogger(__name__)
 
 
+def _record_shopify_catalog(product):
+    """A created or updated product records the same catalog a webhook would record."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import chain_stage
+
+    recorded = chain_stage.record_shopify_catalog(product)
+    if isinstance(recorded, dict) and recorded.get("ok") is False:
+        raise IntegrationError(recorded.get("error") or "supply chain rejected the product")
+    return recorded
+
+
 class ShopifyB2BConnector(BaseConnector):
     """
     Connector for Shopify Admin API with B2B features.
@@ -223,6 +239,7 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Created product data
         """
+        _record_shopify_catalog(product_data)
         response = self.post(self.ENDPOINTS['products'], {'product': product_data})
         return response.get('product', response)
     
@@ -237,6 +254,7 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Updated product data
         """
+        _record_shopify_catalog(product_data)
         endpoint = self.ENDPOINTS['product'].format(id=product_id)
         response = self.put(endpoint, {'product': product_data})
         return response.get('product', response)

@@ -5531,5 +5531,136 @@ class SettlementRouteTests(unittest.TestCase):
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
 
+    def test_a_created_shopify_product_records_the_named_catalog_once(self) -> None:
+        product = {
+            "title": "Gentle cleanser",
+            "tags": "formula:cleanser",
+            "variants": [{"sku": "sku-cleanser"}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationError = importlib.import_module("integrations.common.exceptions").IntegrationError
+                ShopifyB2BConnector = importlib.import_module(
+                    "integrations.shopify.connector"
+                ).ShopifyB2BConnector
+
+                class _Catalog(ShopifyB2BConnector):
+                    def __init__(self):
+                        self.sent = []
+                        self.ENDPOINTS = {
+                            "products": "products.json",
+                            "product": "products/{id}.json",
+                        }
+
+                    def post(self, endpoint, data):
+                        self.sent.append(("post", data["product"].get("title")))
+                        return {"product": data["product"]}
+
+                    def put(self, endpoint, data):
+                        self.sent.append(("put", data["product"].get("title")))
+                        return {"product": data["product"]}
+
+                connector = _Catalog()
+                shelf = connector.create_product(
+                    {"title": "Shelf", "tags": "retail", "variants": [{"sku": "sku-a"}]}
+                )
+                self.assertEqual(shelf["title"], "Shelf")
+                self.assertEqual(connector.sent, [("post", "Shelf")])
+                self.assertFalse(ledger.exists())
+                with self.assertRaises(IntegrationError):
+                    connector.create_product(
+                        {"tags": "formula:cleanser", "variants": [{"sku": "sku-cleanser"}]}
+                    )
+                self.assertEqual(connector.sent, [("post", "Shelf")])
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {
+                                        "ingredient_id": "glycerin",
+                                        "inci": "Glycerin",
+                                        "cas": "56-81-5",
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 8000]],
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                created = connector.create_product(product)
+                self.assertEqual(created["title"], "Gentle cleanser")
+                self.assertEqual(connector.sent, [("post", "Shelf"), ("post", "Gentle cleanser")])
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"sku_id": "sku-cleanser"', text)
+                self.assertIn('"formula_id": "cleanser"', text)
+                updated = connector.update_product(4, product)
+                self.assertEqual(updated["title"], "Gentle cleanser")
+                self.assertEqual(
+                    connector.sent,
+                    [("post", "Shelf"), ("post", "Gentle cleanser"), ("put", "Gentle cleanser")],
+                )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                with self.assertRaises(IntegrationError):
+                    connector.update_product(4, {**product, "formulaId": "serum-c"})
+                self.assertEqual(
+                    connector.sent,
+                    [("post", "Shelf"), ("post", "Gentle cleanser"), ("put", "Gentle cleanser")],
+                )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
+
 if __name__ == "__main__":
     unittest.main()
