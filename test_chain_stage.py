@@ -2053,6 +2053,24 @@ class SettlementRouteTests(unittest.TestCase):
         named_commands = shopify_order_update_commands(named_partial)
         self.assertEqual([command["command"] for command in named_commands], ["fulfill", "return_sale"])
         self.assertEqual(named_commands[1]["args"]["fulfillment_id"], "9:0:sku-serum-c")
+        stripped = {
+            **named_partial,
+            "line_items": [{**named_line, "id": "100"}],
+            "refunds": [
+                {
+                    "refund_line_items": [
+                        {
+                            "line_item_id": 100,
+                            "quantity": 1,
+                            "line_item": {"id": 100, "quantity": 1},
+                        }
+                    ]
+                }
+            ],
+        }
+        stripped_commands = shopify_order_update_commands(stripped)
+        self.assertEqual([command["command"] for command in stripped_commands], ["fulfill", "return_sale"])
+        self.assertEqual(stripped_commands[1]["args"]["fulfillment_id"], "9:0:sku-serum-c")
         self.assertEqual(
             shopify_order_update_commands(
                 {

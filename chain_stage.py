@@ -490,21 +490,32 @@ def _shopify_returned(order: dict) -> bool:
     return status in _SHOPIFY_RETURNED
 
 
+def _line_id(value: object) -> str:
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
 def shopify_refunded_line_commands(order: dict) -> list[dict]:
     """A fully refunded line of a shipped order returns that sale.
 
     A refund quantity below the line quantity stays off the ledger.
-    A line that names the sku but not the location returns the sale already drawn.
+    A refund line that omits the sku or the location uses the order line, then the sale already drawn.
     """
     if not isinstance(order, dict):
         raise StageRejection("order is required")
     items = _sale_lines(order)
     if not isinstance(items, list):
         raise StageRejection("line_items must be a list")
-    indexes: dict[object, int] = {}
+    indexes: dict[str, int] = {}
     for index, item in enumerate(items):
-        if isinstance(item, dict) and item.get("id") is not None:
-            indexes[item.get("id")] = index
+        if not isinstance(item, dict):
+            continue
+        key = _line_id(item.get("id"))
+        if key:
+            indexes[key] = index
     refunds = order.get("refunds") or []
     if not isinstance(refunds, list):
         raise StageRejection("refunds must be a list")
@@ -520,17 +531,15 @@ def shopify_refunded_line_commands(order: dict) -> list[dict]:
         for refund_line in lines:
             if not isinstance(refund_line, dict):
                 raise StageRejection("each refund line must be an object")
-            line = refund_line.get("line_item")
-            line_id = refund_line.get("line_item_id")
-            if not isinstance(line, dict):
-                line = next(
-                    (item for item in items if isinstance(item, dict) and item.get("id") == line_id),
-                    None,
-                )
-            if not isinstance(line, dict):
-                continue
-            index = indexes.get(line.get("id", line_id))
-            if index is None:
+            refund_item = refund_line.get("line_item")
+            refund_item = refund_item if isinstance(refund_item, dict) else None
+            line_key = _line_id(refund_item.get("id") if refund_item else None) or _line_id(
+                refund_line.get("line_item_id")
+            )
+            index = indexes.get(line_key) if line_key else None
+            order_line = items[index] if index is not None and isinstance(items[index], dict) else None
+            line = refund_item or order_line
+            if not isinstance(line, dict) or index is None:
                 continue
             refunded = refund_line.get("quantity")
             sold = line.get("quantity") or 1
@@ -541,11 +550,19 @@ def shopify_refunded_line_commands(order: dict) -> list[dict]:
                 continue
             if refunded_qty != sold_qty:
                 continue
-            sku = _named_sku(line)
+            sku = _named_sku(line) or (_named_sku(order_line) if isinstance(order_line, dict) else "")
             if not sku:
                 continue
             fulfillment_id = f"{order_id}:{index}:{sku}"
-            location, milligrams, _kind, _practitioner = _shopify_line(line, _order_line_defaults(order))
+            defaults = _order_line_defaults(order)
+            location, milligrams, _kind, _practitioner = _shopify_line(line, defaults)
+            if (
+                location is None
+                and milligrams is None
+                and isinstance(order_line, dict)
+                and order_line is not line
+            ):
+                location, milligrams, _kind, _practitioner = _shopify_line(order_line, defaults)
             if location is None and milligrams is None:
                 if not _recorded_fulfillment(fulfillment_id):
                     continue
