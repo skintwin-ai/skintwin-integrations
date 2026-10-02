@@ -59,6 +59,39 @@ def _record_shopify_order(order):
     return recorded
 
 
+def _stated_order_id(order):
+    """The order number a payload already states. A blank one is absent."""
+    if not isinstance(order, dict):
+        return None
+    for key in ("order_number", "name", "id"):
+        value = order.get(key)
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            continue
+        if value:
+            return value
+    return None
+
+
+def _saved_shopify_order(saved, order_id):
+    """A saved cancellation that omits its id returns the sale recorded for the id being saved.
+
+    A saved order that names itself keeps that id. An open saved order is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or order_id is None or _order_names_itself(saved):
+        return saved
+    restocked = str(saved.get("fulfillment_status") or "").strip().lower() == "restocked"
+    financial = str(saved.get("financial_status") or "").strip().lower()
+    returned = restocked or bool(
+        saved.get("cancelled_at") or saved.get("cancel_reason") or financial in {"refunded", "voided"}
+    )
+    if not returned:
+        return saved
+    return {**saved, "id": order_id}
+
+
 def _draft_names_itself(draft) -> bool:
     if not isinstance(draft, dict):
         return False
@@ -400,7 +433,7 @@ class ShopifyB2BConnector(BaseConnector):
         response = self.post(self.ENDPOINTS['orders'], {'order': order_data})
         saved = response.get('order', response)
         if saved is not order_data:
-            _record_shopify_order(saved)
+            _record_shopify_order(_saved_shopify_order(saved, _stated_order_id(order_data)))
         return saved
     
     def update_order(self, order_id: int, order_data: Dict) -> Dict[str, Any]:
@@ -419,7 +452,7 @@ class ShopifyB2BConnector(BaseConnector):
         response = self.put(endpoint, {'order': order_data})
         saved = response.get('order', response)
         if saved is not order_data:
-            _record_shopify_order(saved)
+            _record_shopify_order(_saved_shopify_order(saved, order_id))
         return saved
     
     def cancel_order(self, order_id: int, reason: str = "other") -> Dict[str, Any]:

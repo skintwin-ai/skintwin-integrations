@@ -10083,6 +10083,240 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_saved_shopify_cancel_returns_the_sale_when_the_order_omits_its_id(self) -> None:
+        line = {
+            "sku": "sku-serum-c",
+            "location": "cape-town",
+            "milligrams": 2000,
+            "quantity": 1,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationError = importlib.import_module("integrations.common.exceptions").IntegrationError
+                ShopifyB2BConnector = importlib.import_module(
+                    "integrations.shopify.connector"
+                ).ShopifyB2BConnector
+
+                class _Orders(ShopifyB2BConnector):
+                    def __init__(self):
+                        self.sent = []
+                        self.responses = []
+                        self.ENDPOINTS = {"orders": "orders.json", "order": "orders/{id}.json"}
+
+                    def post(self, endpoint, data=None):
+                        self.sent.append(("post", endpoint))
+                        return {"order": self.responses.pop(0)}
+
+                    def put(self, endpoint, data=None):
+                        self.sent.append(("put", endpoint))
+                        return {"order": self.responses.pop(0)}
+
+                connector = _Orders()
+                connector.responses.append({"cancelled_at": "2026-10-02T00:00:00Z"})
+                absent = connector.update_order(7, {"line_items": [{"title": "Signature Facial"}]})
+                self.assertEqual(absent.get("cancelled_at"), "2026-10-02T00:00:00Z")
+                self.assertEqual(connector.sent, [("put", "orders/7.json")])
+                self.assertFalse(ledger.exists())
+                connector.responses.append(
+                    {
+                        "cancelled_at": "2026-10-02T00:00:00Z",
+                        "line_items": [{**line, "milligrams": "lots"}],
+                    }
+                )
+                with self.assertRaises(IntegrationError):
+                    connector.update_order(9, {"line_items": [{"title": "Signature Facial"}]})
+                self.assertEqual(connector.sent, [("put", "orders/7.json"), ("put", "orders/9.json")])
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 12000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 12000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 12000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "xfer-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 10000,
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "9:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "19:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "8:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "4:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                connector.responses.append({"cancelled_at": "2026-10-02T00:00:00Z"})
+                updated = connector.update_order(9, {"line_items": [{"title": "Signature Facial"}]})
+                self.assertEqual(updated.get("cancelled_at"), "2026-10-02T00:00:00Z")
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"return_id": "return:9:0:sku-serum-c"', text)
+                self.assertIn('"transfer_id": "xfer-cape-town"', text)
+                self.assertNotIn('"return_id": "return:19:0:sku-serum-c"', text)
+                self.assertNotIn('"return_id": "return:xfer-cape-town"', text)
+                connector.responses.append({"cancel_reason": "customer"})
+                connector.update_order(9, {"line_items": [{"title": "Signature Facial"}]})
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                connector.responses.append({"order_number": 19, "cancelled_at": "2026-10-02T00:00:00Z"})
+                other = connector.update_order(9, {"line_items": [{"title": "Signature Facial"}]})
+                self.assertEqual(other.get("order_number"), 19)
+                named = ledger.read_text(encoding="utf-8")
+                self.assertIn('"return_id": "return:19:0:sku-serum-c"', named)
+                self.assertIn('"return_id": "return:9:0:sku-serum-c"', named)
+                connector.responses.append({"financial_status": "voided"})
+                connector.create_order({"order_number": 8, "line_items": [{"title": "Signature Facial"}]})
+                voided = ledger.read_text(encoding="utf-8")
+                self.assertIn('"return_id": "return:8:0:sku-serum-c"', voided)
+                connector.responses.append({"fulfillment_status": "restocked"})
+                connector.update_order(4, {"line_items": [{"title": "Signature Facial"}]})
+                restocked = ledger.read_text(encoding="utf-8")
+                self.assertIn('"return_id": "return:4:0:sku-serum-c"', restocked)
+                connector.responses.append({"line_items": [line]})
+                with self.assertRaises(IntegrationError):
+                    connector.update_order(5, {"line_items": [{"title": "Signature Facial"}]})
+                self.assertNotIn('"fulfillment_id": "5:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
+                self.assertEqual(ledger.read_text(encoding="utf-8"), restocked)
+                before_changed = list(connector.sent)
+                connector.responses.append(
+                    {
+                        "cancelled_at": "2026-10-02T00:00:00Z",
+                        "line_items": [{**line, "milligrams": "lots"}],
+                    }
+                )
+                with self.assertRaises(IntegrationError):
+                    connector.update_order(19, {"line_items": [{"title": "Signature Facial"}]})
+                self.assertEqual(connector.sent, before_changed + [("put", "orders/19.json")])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), restocked)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
 
 if __name__ == "__main__":
     unittest.main()
