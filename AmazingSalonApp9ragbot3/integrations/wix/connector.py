@@ -401,7 +401,10 @@ class WixBookingsConnector(BaseConnector):
         Returns:
             Dict: Created booking data
         """
-        _record_named_wix_delivery(appointment_data)
+        request_cancelled = _wix_update_cancelled(appointment_data)
+        omitted_cancel = request_cancelled and not _names_wix_delivery(appointment_data)
+        if not omitted_cancel:
+            _record_named_wix_delivery(appointment_data)
         try:
             # Map unified appointment to Wix booking format
             wix_booking = self._map_to_wix_booking(appointment_data)
@@ -423,8 +426,16 @@ class WixBookingsConnector(BaseConnector):
             logger.error(f"Failed to create Wix booking: {e}")
             raise IntegrationError(f"Failed to create booking: {e}", platform=self.PLATFORM_NAME)
         # Wix is already called. A delivery on the created booking is the same transfer a webhook would record.
-        if created_booking is not appointment_data:
+        # A cancellation that omits the delivery returns the movement this booking already recorded.
+        if created_booking is not appointment_data and not request_cancelled:
             _record_named_wix_delivery(created_booking)
+        if omitted_cancel:
+            booking_id = str(
+                (appointment_data.get("id") if isinstance(appointment_data, dict) else "")
+                or created_booking.get("id")
+                or ""
+            ).strip()
+            _record_wix_cancellation(booking_id)
         return created_booking
     
     def update_appointment(self, appointment_id: str, appointment_data: Dict) -> Dict:
