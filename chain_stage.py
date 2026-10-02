@@ -132,10 +132,17 @@ def settlement_for_payment(data: dict) -> tuple[dict, int] | None:
 
 
 def _cents(data: dict) -> int:
-    amount_cents = data.get("amount_cents")
+    """A whole cent string is already minor units. A numeric amount is major units."""
+    amount_cents = _whole_count(data.get("amount_cents"))
     if isinstance(amount_cents, int) and not isinstance(amount_cents, bool):
         return amount_cents
     amount = data.get("amount")
+    if isinstance(amount, str):
+        text = amount.strip()
+        try:
+            amount = float(text) if text else None
+        except ValueError:
+            amount = None
     if isinstance(amount, bool) or not isinstance(amount, (int, float)):
         raise StageRejection("amount_cents is required")
     cents = int(round(float(amount) * 100))
