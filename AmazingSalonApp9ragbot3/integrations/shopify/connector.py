@@ -697,6 +697,7 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Created draft order data
         """
+        _record_shopify_draft(draft_order_data)
         response = self.post(
             self.ENDPOINTS['draft_orders'],
             {'draft_order': draft_order_data}
