@@ -12602,6 +12602,139 @@ class SettlementRouteTests(unittest.TestCase):
                 repeated = connector.update_appointment("41", {"items": [line]})
                 self.assertEqual(connector.updated, ["orders/41.json", "orders/41.json"])
                 self.assertEqual(ledger.read_text(encoding="utf-8"), moved)
+                connector.responses.append(
+                    {
+                        "id": 42,
+                        "order_number": 42,
+                        "fulfillment_status": "fulfilled",
+                        "financial_status": "partially_refunded",
+                        "line_items": [line],
+                    }
+                )
+                refunded = connector.create_appointment(
+                    {
+                        "order_number": 42,
+                        "items": [line],
+                        "refunds": [
+                            {
+                                "refund_line_items": [
+                                    {"quantity": 1, "line_item": {"sku": "sku-serum-c"}},
+                                ]
+                            }
+                        ],
+                    }
+                )
+                self.assertEqual(refunded.get("id"), 42)
+                self.assertNotIn("refunds", refunded)
+                refund_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "42:0:sku-serum-c"', refund_text)
+                self.assertIn('"return_id": "return:42:0:sku-serum-c"', refund_text)
+                self.assertIn('"transfer_id": "xfer-cape-town"', refund_text)
+                self.assertNotIn('"return_id": "return:xfer-cape-town"', refund_text)
+                connector.responses.append(
+                    {
+                        "id": 42,
+                        "order_number": 42,
+                        "fulfillment_status": "fulfilled",
+                        "financial_status": "partially_refunded",
+                        "line_items": [line],
+                    }
+                )
+                again_refund = connector.create_appointment(
+                    {
+                        "order_number": 42,
+                        "items": [line],
+                        "refunds": [
+                            {
+                                "refund_line_items": [
+                                    {"quantity": 1, "line_item": {"sku": "sku-serum-c"}},
+                                ]
+                            }
+                        ],
+                    }
+                )
+                self.assertEqual(again_refund.get("id"), 42)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), refund_text)
+                connector.responses.append(
+                    {
+                        "id": 43,
+                        "order_number": 43,
+                        "fulfillment_status": "fulfilled",
+                        "financial_status": "partially_refunded",
+                        "line_items": [{**line, "quantity": 2}],
+                    }
+                )
+                short_refund = connector.create_appointment(
+                    {
+                        "order_number": 43,
+                        "items": [{**line, "quantity": 2}],
+                        "refunds": [
+                            {
+                                "refund_line_items": [
+                                    {"quantity": 1, "line_item": {"sku": "sku-serum-c"}},
+                                ]
+                            }
+                        ],
+                    }
+                )
+                self.assertEqual(short_refund.get("id"), 43)
+                short_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "43:0:sku-serum-c"', short_text)
+                self.assertNotIn('"return_id": "return:43:0:sku-serum-c"', short_text)
+                connector.responses.append(
+                    {
+                        "order_number": 45,
+                        "fulfillment_status": "fulfilled",
+                        "financial_status": "partially_refunded",
+                    }
+                )
+                updated_refund = connector.update_appointment(
+                    "45",
+                    {
+                        "order_number": 45,
+                        "items": [line],
+                        "refunds": [
+                            {
+                                "refund_line_items": [
+                                    {"quantity": 1, "line_item": {"sku": "sku-serum-c"}},
+                                ]
+                            }
+                        ],
+                    },
+                )
+                self.assertEqual(updated_refund.get("order_number"), 45)
+                self.assertNotIn("line_items", updated_refund)
+                updated_refund_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "45:0:sku-serum-c"', updated_refund_text)
+                self.assertIn('"return_id": "return:45:0:sku-serum-c"', updated_refund_text)
+                connector.responses.append(
+                    {
+                        "id": 42,
+                        "order_number": 42,
+                        "fulfillment_status": "fulfilled",
+                        "financial_status": "partially_refunded",
+                        "line_items": [{**line, "location": "johannesburg"}],
+                    }
+                )
+                before_changed_refund = list(connector.posted)
+                with self.assertRaises(IntegrationError):
+                    connector.update_appointment(
+                        "42",
+                        {
+                            "order_number": 42,
+                            "items": [{**line, "location": "johannesburg"}],
+                            "refunds": [
+                                {
+                                    "refund_line_items": [
+                                        {"quantity": 1, "line_item": {"sku": "sku-serum-c"}},
+                                    ]
+                                }
+                            ],
+                        },
+                    )
+                self.assertEqual(connector.posted, before_changed_refund)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), updated_refund_text)
+                self.assertNotIn("johannesburg", ledger.read_text(encoding="utf-8"))
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)

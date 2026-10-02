@@ -108,8 +108,8 @@ def _record_shopify_order(order):
 def _record_saved_appointment_lines(saved, appointment_data, mapped):
     """A saved fulfilled order that omits its lines draws the sale the appointment already named.
 
-    The mapper posts a pending order and drops that sale. An appointment that is
-    itself fulfilled was already recorded. An open saved order stays unchanged.
+    The mapper posts a pending order and drops that sale, including a partial refund.
+    An appointment that is itself fulfilled was already recorded. An open saved order stays unchanged.
     """
     if not isinstance(saved, dict) or not isinstance(appointment_data, dict):
         return None
@@ -118,9 +118,10 @@ def _record_saved_appointment_lines(saved, appointment_data, mapped):
     if str(appointment_data.get("fulfillment_status") or "").strip().lower() == "fulfilled":
         return None
     stamped = _saved_shopify_fulfilled_lines(saved, appointment_data)
-    if stamped is saved:
+    refunded = _saved_shopify_refunds(stamped, appointment_data)
+    if refunded is saved:
         return None
-    return _record_shopify_order(stamped)
+    return _record_shopify_order(refunded)
 
 
 def _stated_order_id(order):
