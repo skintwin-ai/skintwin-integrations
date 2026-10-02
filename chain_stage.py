@@ -517,12 +517,27 @@ def _recorded_sale_returns(order_id: str) -> list[dict]:
     )
 
 
+def _merge_recorded_returns(commands: list[dict], order_id: str) -> list[dict]:
+    """A cancel that names some lines still returns the other sales of that order."""
+    named = {command["args"]["fulfillment_id"] for command in commands}
+    merged = list(commands)
+    for command in _recorded_sale_returns(order_id):
+        fulfillment_id = command["args"]["fulfillment_id"]
+        if fulfillment_id in named:
+            continue
+        merged.append(command)
+        named.add(fulfillment_id)
+    return merged
+
+
 def shopify_return_commands(order: dict) -> list[dict]:
-    """A cancelled order returns the sale its lines would draw."""
+    """A cancelled order returns every sale that order already drew.
+
+    A line the payload names is returned from that line.
+    A sale the payload omits is returned from the recorded fulfillment.
+    """
     commands = _sale_returns(shopify_fulfillment_commands(order))
-    if commands:
-        return commands
-    return _recorded_sale_returns(_order_label(order, "order_number", "name", "id"))
+    return _merge_recorded_returns(commands, _order_label(order, "order_number", "name", "id"))
 
 
 _SHOPIFY_RETURNED = frozenset({"refunded", "voided"})
@@ -834,7 +849,11 @@ def opencart_settlement_commands(order: dict) -> list[dict]:
 
 
 def opencart_return_commands(order: dict) -> list[dict]:
-    """A refunded or cancelled order returns the sale its lines name."""
+    """A refunded or cancelled order returns every sale that order already drew.
+
+    A line the payload names is returned from that line.
+    A sale the payload omits is returned from the recorded fulfillment.
+    """
     if not isinstance(order, dict):
         raise StageRejection("order is required")
     if not _opencart_returned(order):
@@ -850,9 +869,7 @@ def opencart_return_commands(order: dict) -> list[dict]:
     }
     named["status"] = "shipped"
     commands = _sale_returns(opencart_fulfillment_commands(named))
-    if commands:
-        return commands
-    return _recorded_sale_returns(_order_label(order, "order_id", "order_number", "id"))
+    return _merge_recorded_returns(commands, label)
 
 
 # OpenCart connector payment map, labeled with the status names that map already uses.

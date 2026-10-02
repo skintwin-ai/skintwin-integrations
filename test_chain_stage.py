@@ -2861,8 +2861,33 @@ class SettlementRouteTests(unittest.TestCase):
     def test_a_cancelled_order_returns_the_sale_it_already_recorded(self) -> None:
         thin = {"id": 9, "order_number": 9, "cancelled_at": "2026-10-02T00:00:00Z"}
         opencart_cancel = {"order_id": 4, "new_status_id": 7}
+        shopify_partial = {
+            "id": 21,
+            "order_number": 21,
+            "cancelled_at": "2026-10-02T00:00:00Z",
+            "line_items": [
+                {"title": "Consultation"},
+                {"sku": "sku-serum-c", "location": "cape-town", "milligrams": 1000},
+            ],
+        }
+        opencart_partial = {
+            "order_id": 22,
+            "new_status_id": 7,
+            "products": [
+                {"name": "Consultation"},
+                {"model": "sku-serum-c", "location": "cape-town", "milligrams": 1000},
+            ],
+        }
         self.assertEqual(shopify_return_commands(thin), [])
         self.assertEqual(opencart_return_commands(opencart_cancel), [])
+        self.assertEqual(
+            [command["args"]["fulfillment_id"] for command in shopify_return_commands(shopify_partial)],
+            ["21:1:sku-serum-c"],
+        )
+        self.assertEqual(
+            [command["args"]["fulfillment_id"] for command in opencart_return_commands(opencart_partial)],
+            ["22:1:sku-serum-c"],
+        )
         with tempfile.TemporaryDirectory() as tmp:
             ledger = Path(tmp) / "supply-chain.jsonl"
             previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
@@ -2991,6 +3016,95 @@ class SettlementRouteTests(unittest.TestCase):
                 repeated = opencart.OpenCartWebhookHandler("secret").on_order_status_changed(opencart_cancel)
                 self.assertEqual(repeated["recorded"], {"ok": True, "count": 0})
                 self.assertEqual(ledger.read_text(encoding="utf-8"), recorded)
+                split = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "21:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 1000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "21:1:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 1000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "22:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 1000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "22:1:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 1000,
+                                        "kind": "retail",
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(split.returncode, 0, split.stderr or split.stdout)
+                named = shopify_return_commands(shopify_partial)
+                self.assertEqual(
+                    [command["args"]["fulfillment_id"] for command in named],
+                    ["21:1:sku-serum-c", "21:0:sku-serum-c"],
+                )
+                self.assertEqual(
+                    [command["args"]["return_id"] for command in named],
+                    ["return:21:1:sku-serum-c", "return:21:0:sku-serum-c"],
+                )
+                cancelled_split = shopify.ShopifyWebhookHandler("secret").on_order_cancelled(shopify_partial)
+                self.assertEqual(cancelled_split["recorded"], {"ok": True, "count": 2})
+                split_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"return_id": "return:21:0:sku-serum-c"', split_text)
+                self.assertIn('"return_id": "return:21:1:sku-serum-c"', split_text)
+                self.assertEqual(split_text.count('"return_id": "return:4:0:sku-serum-c"'), 1)
+                self.assertNotIn('"return_id": "return:22:0:sku-serum-c"', split_text)
+                self.assertNotIn('"return_id": "return:to-cape-town"', split_text)
+                cancelled_again = shopify.ShopifyWebhookHandler("secret").on_order_cancelled(shopify_partial)
+                self.assertEqual(cancelled_again["recorded"], {"ok": True, "count": 0})
+                self.assertEqual(ledger.read_text(encoding="utf-8"), split_text)
+                opencart_named = opencart_return_commands(opencart_partial)
+                self.assertEqual(
+                    [command["args"]["fulfillment_id"] for command in opencart_named],
+                    ["22:1:sku-serum-c", "22:0:sku-serum-c"],
+                )
+                changed_split = opencart.OpenCartWebhookHandler("secret").on_order_status_changed(opencart_partial)
+                self.assertEqual(changed_split["recorded"], {"ok": True, "count": 2})
+                opencart_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"return_id": "return:22:0:sku-serum-c"', opencart_text)
+                self.assertIn('"return_id": "return:22:1:sku-serum-c"', opencart_text)
+                self.assertEqual(opencart_text.count('"return_id": "return:21:0:sku-serum-c"'), 1)
+                self.assertNotIn('"return_id": "return:to-cape-town"', opencart_text)
+                opencart_again = opencart.OpenCartWebhookHandler("secret").on_order_status_changed(opencart_partial)
+                self.assertEqual(opencart_again["recorded"], {"ok": True, "count": 0})
+                self.assertEqual(ledger.read_text(encoding="utf-8"), opencart_text)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
