@@ -531,7 +531,12 @@ class WixBookingsConnector(BaseConnector):
             logger.error(f"Failed to confirm Wix booking {appointment_id}: {e}")
             raise IntegrationError(f"Failed to confirm booking: {e}", platform=self.PLATFORM_NAME)
         # Wix is already called. A delivery on the confirmed booking is the same transfer a webhook would record.
-        _record_named_wix_delivery(confirmed, appointment_id)
+        # A cancellation that omits the delivery returns the movement this booking already recorded.
+        response_omits = _wix_update_cancelled(confirmed) and not _names_wix_delivery(confirmed)
+        if not response_omits:
+            _record_named_wix_delivery(confirmed, appointment_id)
+        if response_omits:
+            _record_wix_cancellation(appointment_id)
         return confirmed
     
     def _map_to_wix_booking(self, appointment_data: Dict) -> Dict:
