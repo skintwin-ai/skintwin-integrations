@@ -13,8 +13,10 @@ from chain_stage import (
     opencart_fulfillment_commands,
     opencart_return_commands,
     opencart_settlement_commands,
+    paystack_settlement,
     record_opencart_fulfillments,
     record_draft_order,
+    record_paystack_settlement,
     record_shopify_fulfillments,
     record_shopify_returns,
     record_shopify_settlement,
@@ -892,6 +894,145 @@ class SettlementRouteTests(unittest.TestCase):
                 again_body, again_status = return_for_refund(
                     {"fulfillment_id": "order-retail", "return_id": "return:tx-1:order-retail"}
                 )
+                self.assertEqual(again_status, 400)
+                self.assertFalse(again_body["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
+    def test_a_verified_paystack_charge_settles_the_named_sale_once(self) -> None:
+        plain = {"status": True, "data": {"amount": 18500, "currency": "NGN", "reference": "salon-1"}}
+        self.assertIsNone(paystack_settlement(plain))
+        self.assertIsNone(record_paystack_settlement(plain))
+        verified = {
+            "status": True,
+            "data": {
+                "amount": "18500",
+                "currency": "ngn",
+                "reference": "salon-1",
+                "metadata": json.dumps(
+                    {"fulfillment_id": "order-retail", "client_id": "1", "settlement_id": "pay-salon-1"}
+                ),
+            },
+        }
+        self.assertEqual(
+            paystack_settlement(verified),
+            {
+                "fulfillment_id": "order-retail",
+                "settlement_id": "pay-salon-1",
+                "amount_cents": 18500,
+                "currency": "ngn",
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                missing_body, missing_status = record_paystack_settlement(verified)
+                self.assertEqual(missing_status, 400)
+                self.assertFalse(missing_body["ok"])
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "cleanser",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "order-retail",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                body, status = record_paystack_settlement(verified)
+                self.assertEqual(status, 200)
+                self.assertEqual(body["artifact"]["amount_cents"], 18500)
+                self.assertEqual(body["artifact"]["currency"], "NGN")
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn("pay-salon-1", text)
+                again_body, again_status = record_paystack_settlement(verified)
                 self.assertEqual(again_status, 400)
                 self.assertFalse(again_body["ok"])
                 self.assertEqual(ledger.read_text(encoding="utf-8"), text)

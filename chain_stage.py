@@ -49,6 +49,58 @@ def return_for_refund(data: dict) -> tuple[dict, int] | None:
     return {"ok": True, "artifact": artifact}, 200
 
 
+def paystack_settlement(transaction: dict) -> dict | None:
+    """A verified Paystack charge settles when its metadata names a fulfillment.
+
+    Paystack's amount is already in minor units.
+    """
+    if not isinstance(transaction, dict):
+        return None
+    data = transaction.get("data") if isinstance(transaction.get("data"), dict) else transaction
+    if not isinstance(data, dict):
+        return None
+    metadata = data.get("metadata") if data.get("metadata") is not None else {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    fulfillment_id = metadata.get("fulfillment_id") or data.get("fulfillment_id")
+    if not isinstance(fulfillment_id, str) or not fulfillment_id.strip():
+        return None
+    reference = data.get("reference") or data.get("id") or fulfillment_id
+    settlement_id = metadata.get("settlement_id") or f"pay-{reference}"
+    if not isinstance(settlement_id, str) or not settlement_id.strip():
+        return None
+    amount = data.get("amount")
+    if isinstance(amount, str) and amount.strip():
+        try:
+            amount = int(amount.strip()) if amount.strip().isdigit() else float(amount.strip())
+        except ValueError:
+            return None
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        return None
+    cents = int(amount) if isinstance(amount, int) else int(round(float(amount)))
+    if cents < 1:
+        return None
+    currency = data.get("currency") or metadata.get("currency") or "NGN"
+    return {
+        "fulfillment_id": fulfillment_id.strip(),
+        "settlement_id": settlement_id.strip(),
+        "amount_cents": cents,
+        "currency": currency,
+    }
+
+
+def record_paystack_settlement(transaction: dict) -> tuple[dict, int] | None:
+    payment = paystack_settlement(transaction)
+    if payment is None:
+        return None
+    return settlement_for_payment(payment)
+
+
 def settlement_for_payment(data: dict) -> tuple[dict, int] | None:
     """Settle a payment that names a fulfillment before the processor runs."""
     if not isinstance(data, dict) or not data.get("fulfillment_id"):

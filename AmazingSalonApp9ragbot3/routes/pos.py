@@ -43,6 +43,20 @@ def _payment_field(payment, name):
     return getattr(payment, name, None)
 
 
+def _settle_paystack(transaction):
+    """Record a verified Paystack charge that names a fulfillment."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from chain_stage import record_paystack_settlement, use_shared_ledger
+
+    use_shared_ledger()
+    return record_paystack_settlement(transaction)
+
+
 def _return_chain_sale(fulfillment_id, transaction_id):
     """Return the sale before the processor refunds the payment."""
     import sys
@@ -173,6 +187,8 @@ def initialize_paystack():
             'client_id': client_id,
             'description': description,
             'points_redeemed': points_to_redeem,
+            'fulfillment_id': data.get('fulfillment_id') if isinstance(data.get('fulfillment_id'), str) else None,
+            'settlement_id': data.get('settlement_id') if isinstance(data.get('settlement_id'), str) else None,
             'custom_fields': [
                 {
                     'display_name': 'Client ID',
@@ -237,13 +253,27 @@ def verify_paystack():
         
         if response.status_code == 200 and response_data['status'] and response_data['data']['status'] == 'success':
             # Get transaction details from Paystack response
-            metadata = response_data['data'].get('metadata', {})
+            metadata = response_data['data'].get('metadata') or {}
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except json.JSONDecodeError:
+                    metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
             client_id = metadata.get('client_id')
             description = metadata.get('description', 'Paystack Payment')
             points_redeemed = int(metadata.get('points_redeemed', 0))
             
             # Get amount in dollars
             amount = float(response_data['data']['amount']) / 100  # Convert from kobo/cents to dollars
+            fulfillment_id = metadata.get('fulfillment_id') if isinstance(metadata, dict) else None
+            settled = _settle_paystack(response_data)
+            if settled is not None:
+                body, status = settled
+                if status != 200:
+                    flash(body.get('error') or 'supply chain rejected the settlement', 'error')
+                    return redirect(url_for('pos.index'))
             
             # Get loyalty points configuration
             points_per_dollar = ConfigManager.get_points_per_dollar()
@@ -261,7 +291,8 @@ def verify_paystack():
                     payment_provider='paystack',
                     payment_intent_id=reference,  # Use Paystack reference as payment_intent_id
                     payment_method_id=response_data['data'].get('authorization', {}).get('authorization_code'),
-                    points_used=points_redeemed
+                    points_used=points_redeemed,
+                    fulfillment_id=fulfillment_id if isinstance(fulfillment_id, str) else None,
                 )
                 transaction_id = transaction.id
                 
@@ -302,7 +333,8 @@ def verify_paystack():
                     client_id=client_id,
                     amount=amount,
                     description=description,
-                    points_used=points_redeemed
+                    points_used=points_redeemed,
+                    fulfillment_id=fulfillment_id if isinstance(fulfillment_id, str) else None,
                 )
                 
                 # Update client's loyalty points in old system
