@@ -984,6 +984,10 @@ class ShopifyB2BConnector(BaseConnector):
         # The mapper posts a pending order and drops a sale this payload already names.
         _record_shopify_order(appointment_data)
         order_data = self._map_appointment_to_order(appointment_data)
+        # A saved cancellation that omits its id still belongs to the order this appointment names.
+        known = _stated_order_id(appointment_data)
+        if known is not None and _stated_order_id(order_data) is None:
+            order_data = {**order_data, "id": known}
         return self.create_order(order_data)
     
     def update_appointment(self, appointment_id: str, appointment_data: Dict) -> Dict:
