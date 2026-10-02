@@ -642,6 +642,196 @@ class SettlementRouteTests(unittest.TestCase):
         self.assertEqual(commands[0]["args"]["milligrams"], 5000)
         self.assertEqual(commands[0]["args"]["kind"], "retail")
 
+    def test_a_blank_line_location_records_the_named_location_once(self) -> None:
+        preferred = shopify_fulfillment_commands(
+            {
+                "order_number": 9,
+                "line_items": [
+                    {
+                        "sku": "sku-serum-c",
+                        "location": "cape-town",
+                        "milligrams": 2000,
+                        "properties": [
+                            {"name": "location", "value": "johannesburg"},
+                            {"name": "milligrams", "value": "9000"},
+                        ],
+                    }
+                ],
+            }
+        )
+        self.assertEqual(preferred[0]["args"]["location"], "cape-town")
+        self.assertEqual(preferred[0]["args"]["milligrams"], 2000)
+        fallen = shopify_fulfillment_commands(
+            {
+                "order_number": 9,
+                "line_items": [
+                    {
+                        "sku": "sku-serum-c",
+                        "location": "  ",
+                        "milligrams": "  ",
+                        "properties": [
+                            {"name": "location", "value": " cape-town "},
+                            {"name": "milligrams", "value": "2000"},
+                        ],
+                    }
+                ],
+                "note_attributes": [
+                    {"name": "location", "value": "johannesburg"},
+                    {"name": "milligrams", "value": "9000"},
+                ],
+            }
+        )
+        self.assertEqual(fallen[0]["args"]["location"], "cape-town")
+        self.assertEqual(fallen[0]["args"]["milligrams"], 2000)
+        noted = shopify_fulfillment_commands(
+            {
+                "order_number": 9,
+                "line_items": [{"sku": "sku-serum-c", "location": "  ", "milligrams": ""}],
+                "note_attributes": [
+                    {"name": "location", "value": "cape-town"},
+                    {"name": "milligrams", "value": "2000"},
+                ],
+            }
+        )
+        self.assertEqual(noted[0]["args"]["location"], "cape-town")
+        self.assertEqual(noted[0]["args"]["milligrams"], 2000)
+        self.assertEqual(
+            shopify_fulfillment_commands(
+                {"order_number": 9, "line_items": [{"sku": "sku-serum-c", "location": "  "}]}
+            ),
+            [],
+        )
+        order = {
+            "order_number": 9,
+            "line_items": [
+                {
+                    "sku": "sku-serum-c",
+                    "location": "  ",
+                    "properties": [
+                        {"name": "location", "value": "cape-town"},
+                        {"name": "milligrams", "value": "2000"},
+                    ],
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                skipped = record_shopify_fulfillments(
+                    {"order_number": 9, "line_items": [{"sku": "sku-serum-c", "location": "  "}]}
+                )
+                self.assertIsNone(skipped)
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                recorded_sale = record_shopify_fulfillments(order)
+                self.assertTrue(recorded_sale["ok"])
+                self.assertEqual(recorded_sale["count"], 1)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"location": "cape-town"', text)
+                again = record_shopify_fulfillments(order)
+                self.assertTrue(again["ok"])
+                self.assertEqual(again["count"], 0)
+                changed = record_shopify_fulfillments(
+                    {
+                        "order_number": 9,
+                        "line_items": [
+                            {
+                                "sku": "sku-serum-c",
+                                "location": "johannesburg",
+                                "milligrams": 2000,
+                            }
+                        ],
+                    }
+                )
+                self.assertFalse(changed["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
     def test_a_property_key_names_the_sale_once(self) -> None:
         keyed = {
             "order_number": 9,

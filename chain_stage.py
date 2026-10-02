@@ -841,28 +841,39 @@ def _order_line_defaults(order: dict) -> dict:
     return _attribute_values(order.get("note_attributes"))
 
 
+def _text_or_same(value: object) -> object:
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return value
+
+
+def _missing_amount(value: object) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
 def _shopify_line(item: dict, defaults: dict | None = None) -> tuple[object, object, str | None, str | None]:
     defaults = defaults or {}
-    location = item.get("location")
-    milligrams = item.get("milligrams")
+    location = _text_or_same(item.get("location"))
+    milligrams = None if _missing_amount(item.get("milligrams")) else item.get("milligrams")
     kind = item.get("kind")
     kind = kind.strip() if isinstance(kind, str) else None
     if not kind:
         kind = None
     practitioner = _named(item, "practitionerId", "practitioner_id")
     for name, value in _attribute_values(item.get("properties")).items():
-        if name == "location" and not location:
-            location = value
-        elif name == "milligrams" and milligrams is None:
+        if name == "location" and location is None:
+            location = _text_or_same(value)
+        elif name == "milligrams" and milligrams is None and not _missing_amount(value):
             milligrams = value
         elif name == "kind" and kind is None and isinstance(value, str):
             kind = value.strip() or None
         elif name == "practitioner_id" and not practitioner:
             practitioner = value.strip() if isinstance(value, str) else value
-    if not location and defaults.get("location"):
-        location = defaults["location"]
-    if milligrams is None and "milligrams" in defaults:
-        milligrams = defaults["milligrams"]
+    if location is None:
+        location = _text_or_same(defaults.get("location"))
+    if milligrams is None and not _missing_amount(defaults.get("milligrams")):
+        milligrams = defaults.get("milligrams")
     if kind is None and isinstance(defaults.get("kind"), str):
         kind = defaults["kind"].strip()
     if not practitioner and defaults.get("practitioner_id"):
