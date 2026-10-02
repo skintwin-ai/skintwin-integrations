@@ -5,13 +5,17 @@ import unittest
 from pathlib import Path
 
 from chain_stage import (
+    opencart_catalog_commands,
+    opencart_fulfillment_commands,
     record_shopify_fulfillments,
     record_shopify_settlement,
+    record_wix_deliveries,
     respond,
     settlement_for_payment,
     shopify_catalog_commands,
     shopify_fulfillment_commands,
     shopify_settlement_commands,
+    wix_delivery_commands,
 )
 
 
@@ -171,6 +175,82 @@ class SettlementRouteTests(unittest.TestCase):
         self.assertEqual(commands[0]["args"]["amount_cents"], 18500)
         self.assertEqual(commands[0]["args"]["fulfillment_id"], "9:0:sku-serum-c")
         self.assertIsNone(record_shopify_settlement({"order_number": 9, "line_items": []}))
+
+    def test_opencart_and_wix_events_use_the_same_ledger_commands(self) -> None:
+        catalog = opencart_catalog_commands(
+            {"name": "Vitamin C serum", "model": "sku-serum-c", "tag": "formula:serum-c"}
+        )
+        self.assertEqual(catalog[0]["args"]["formula_id"], "serum-c")
+        self.assertEqual(catalog[0]["args"]["sku_id"], "sku-serum-c")
+        self.assertEqual(
+            opencart_fulfillment_commands(
+                {
+                    "order_id": 4,
+                    "status": "pending",
+                    "products": [{"model": "sku-serum-c", "location": "cape-town", "milligrams": 5000}],
+                }
+            ),
+            [],
+        )
+        fulfilled = opencart_fulfillment_commands(
+            {
+                "order_id": 4,
+                "status": "Shipped",
+                "products": [{"model": "sku-serum-c", "location": "cape-town", "milligrams": 5000}],
+            }
+        )
+        self.assertEqual(fulfilled[0]["command"], "fulfill")
+        self.assertEqual(fulfilled[0]["args"]["fulfillment_id"], "4:0:sku-serum-c")
+        deliveries = wix_delivery_commands(
+            {
+                "id": "book-1",
+                "services": [
+                    {"name": "Facial"},
+                    {
+                        "delivery": {
+                            "sku_id": "sku-serum-c",
+                            "batch_id": "batch-1",
+                            "source": "plant",
+                            "destination": "cape-town",
+                            "milligrams": 2000,
+                        }
+                    },
+                ],
+            }
+        )
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0]["args"]["transfer_id"], "book-1:1")
+        self.assertIsNone(record_wix_deliveries({"id": "book-1", "services": [{"name": "Facial"}]}))
+
+    def test_wix_delivery_against_an_empty_ledger_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            try:
+                result = record_wix_deliveries(
+                    {
+                        "id": "book-1",
+                        "services": [
+                            {
+                                "delivery": {
+                                    "sku_id": "sku-serum-c",
+                                    "batch_id": "batch-1",
+                                    "source": "plant",
+                                    "destination": "cape-town",
+                                    "milligrams": 2000,
+                                }
+                            }
+                        ],
+                    }
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+        self.assertFalse(result["ok"])
+        self.assertFalse(ledger.exists())
 
     def test_rejects_a_bad_currency(self) -> None:
         body, status = respond(

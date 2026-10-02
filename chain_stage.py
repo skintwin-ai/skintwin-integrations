@@ -220,6 +220,112 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
     return commands
 
 
+def opencart_catalog_commands(product: dict) -> list[dict]:
+    if not isinstance(product, dict):
+        return []
+    return shopify_catalog_commands(
+        {
+            "title": product.get("name") or product.get("title"),
+            "sku": product.get("sku") or product.get("model"),
+            "tags": product.get("tags") if product.get("tags") is not None else product.get("tag"),
+            "formula_id": product.get("formula_id") or product.get("formulaId"),
+            "variants": product.get("variants"),
+        }
+    )
+
+
+_OPENCART_SHIPPED = frozenset({"shipped", "complete", "completed", "delivered", "fulfilled"})
+
+
+def opencart_fulfillment_commands(order: dict) -> list[dict]:
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    status = str(order.get("status") or order.get("new_status") or order.get("order_status") or "").strip().lower()
+    if order.get("fulfilled") is not True and status not in _OPENCART_SHIPPED:
+        return []
+    items = []
+    for item in order.get("products") or order.get("line_items") or []:
+        if not isinstance(item, dict):
+            raise StageRejection("each product must be an object")
+        items.append(
+            {
+                "sku": item.get("sku") or item.get("model"),
+                "location": item.get("location"),
+                "milligrams": item.get("milligrams"),
+                "properties": item.get("properties"),
+                "kind": item.get("kind"),
+                "practitioner_id": item.get("practitioner_id"),
+            }
+        )
+    return shopify_fulfillment_commands(
+        {
+            "order_number": order.get("order_id") or order.get("order_number") or order.get("id"),
+            "line_items": items,
+        }
+    )
+
+
+def wix_delivery_commands(booking: dict) -> list[dict]:
+    if not isinstance(booking, dict):
+        raise StageRejection("booking is required")
+    booking = booking.get("booking") if isinstance(booking.get("booking"), dict) else booking
+    booking_id = _text(str(booking.get("id") or ""), "booking id")
+    services = booking.get("services") or []
+    if isinstance(services, dict):
+        services = [services]
+    if not isinstance(services, list):
+        raise StageRejection("services must be a list")
+    commands = []
+    for index, service in enumerate(services):
+        if not isinstance(service, dict):
+            raise StageRejection("each service must be an object")
+        delivery = service.get("delivery")
+        if not isinstance(delivery, dict):
+            continue
+        source = _text(delivery.get("source"), "source")
+        destination = _text(delivery.get("destination"), "destination")
+        if source == destination:
+            raise StageRejection("transfer source and destination must differ")
+        commands.append(
+            {
+                "command": "transfer",
+                "args": {
+                    "transfer_id": f"{booking_id}:{index}",
+                    "sku_id": _text(delivery.get("sku_id"), "sku_id"),
+                    "batch_id": _text(delivery.get("batch_id"), "batch_id"),
+                    "source": source,
+                    "destination": destination,
+                    "milligrams": _milligrams(delivery.get("milligrams")),
+                },
+            }
+        )
+    return commands
+
+
+def record_opencart_catalog(product: dict) -> dict | None:
+    try:
+        commands = opencart_catalog_commands(product)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_many(commands)
+
+
+def record_opencart_fulfillments(order: dict) -> dict | None:
+    try:
+        commands = opencart_fulfillment_commands(order)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_many(commands)
+
+
+def record_wix_deliveries(booking: dict) -> dict | None:
+    try:
+        commands = wix_delivery_commands(booking)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_many(commands)
+
+
 def record_shopify_catalog(product: dict) -> dict | None:
     try:
         commands = shopify_catalog_commands(product)

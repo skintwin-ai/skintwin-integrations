@@ -164,7 +164,22 @@ class WixWebhookHandler:
         """Handle booking confirmed event."""
         booking = data.get('booking', data)
         logger.info(f"Booking confirmed: {booking.get('id')}")
-        return {'action': 'confirm', 'booking_id': booking.get('id')}
+        recorded = self._supply_chain("record_wix_deliveries", booking, "booking/confirmed")
+        return {'action': 'confirm', 'booking_id': booking.get('id'), 'recorded': recorded}
+
+    def _supply_chain(self, recorder: str, data: Dict, topic: str):
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        import chain_stage
+
+        recorded = getattr(chain_stage, recorder)(data)
+        if isinstance(recorded, dict) and recorded.get("ok") is False:
+            raise WebhookError(recorded.get("error") or "supply chain rejected the webhook", event_type=topic)
+        return recorded
     
     def on_booking_declined(self, data: Dict) -> Dict:
         """Handle booking declined event."""
