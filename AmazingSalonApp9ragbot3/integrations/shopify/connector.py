@@ -270,7 +270,10 @@ class ShopifyB2BConnector(BaseConnector):
         """
         _record_shopify_catalog(product_data)
         response = self.post(self.ENDPOINTS['products'], {'product': product_data})
-        return response.get('product', response)
+        saved = response.get('product', response)
+        if saved is not product_data:
+            _record_shopify_catalog(saved)
+        return saved
     
     def update_product(self, product_id: int, product_data: Dict) -> Dict[str, Any]:
         """
@@ -286,7 +289,10 @@ class ShopifyB2BConnector(BaseConnector):
         _record_shopify_catalog(product_data)
         endpoint = self.ENDPOINTS['product'].format(id=product_id)
         response = self.put(endpoint, {'product': product_data})
-        return response.get('product', response)
+        saved = response.get('product', response)
+        if saved is not product_data:
+            _record_shopify_catalog(saved)
+        return saved
     
     def delete_product(self, product_id: int) -> bool:
         """

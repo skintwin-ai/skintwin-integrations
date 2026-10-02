@@ -5579,13 +5579,41 @@ class SettlementRouteTests(unittest.TestCase):
                             "product": "products/{id}.json",
                         }
 
+                    def _saved(self, data):
+                        title = data["product"].get("title")
+                        echoes = {
+                            "Echo cleanser": {
+                                "title": "Echo cleanser",
+                                "tags": "formula:cleanser",
+                                "variants": [{"sku": "sku-echo"}],
+                            },
+                            "Missing formula": {
+                                "title": "Missing formula",
+                                "tags": "formula:absent",
+                                "variants": [{"sku": "sku-missing"}],
+                            },
+                            "Blank formula": {
+                                "title": "Blank formula",
+                                "tags": "formula:",
+                                "variants": [{"sku": "sku-blank"}],
+                            },
+                            "Serum echo": {
+                                "title": "Serum echo",
+                                "tags": "formula:serum-c",
+                                "variants": [{"sku": "sku-echo"}],
+                            },
+                        }
+                        if title in echoes:
+                            return {"product": echoes[title]}
+                        return {"product": data["product"]}
+
                     def post(self, endpoint, data):
                         self.sent.append(("post", data["product"].get("title")))
-                        return {"product": data["product"]}
+                        return self._saved(data)
 
                     def put(self, endpoint, data):
                         self.sent.append(("put", data["product"].get("title")))
-                        return {"product": data["product"]}
+                        return self._saved(data)
 
                 connector = _Catalog()
                 shelf = connector.create_product(
@@ -5651,6 +5679,41 @@ class SettlementRouteTests(unittest.TestCase):
                     [("post", "Shelf"), ("post", "Gentle cleanser"), ("put", "Gentle cleanser")],
                 )
                 self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                echo = {"title": "Echo cleanser", "tags": "retail", "variants": [{"sku": "sku-echo"}]}
+                echoed = connector.create_product(echo)
+                self.assertEqual(echoed["tags"], "formula:cleanser")
+                self.assertIn(("post", "Echo cleanser"), connector.sent)
+                echoed_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"sku_id": "sku-echo"', echoed_text)
+                self.assertIn('"formula_id": "cleanser"', echoed_text)
+                self.assertNotIn("serum-c", echoed_text)
+                again = connector.create_product(echo)
+                self.assertEqual(again["tags"], "formula:cleanser")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                before_missing = list(connector.sent)
+                with self.assertRaises(IntegrationError):
+                    connector.update_product(
+                        8,
+                        {"title": "Missing formula", "tags": "retail", "variants": [{"sku": "sku-missing"}]},
+                    )
+                self.assertEqual(connector.sent, before_missing + [("put", "Missing formula")])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn("sku-missing", ledger.read_text(encoding="utf-8"))
+                blanked = connector.update_product(
+                    9,
+                    {"title": "Blank formula", "tags": "retail", "variants": [{"sku": "sku-blank"}]},
+                )
+                self.assertEqual(blanked["tags"], "formula:")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn("sku-blank", ledger.read_text(encoding="utf-8"))
+                with self.assertRaises(IntegrationError):
+                    connector.update_product(
+                        10,
+                        {"title": "Serum echo", "tags": "retail", "variants": [{"sku": "sku-echo"}]},
+                    )
+                self.assertIn(("put", "Serum echo"), connector.sent)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn("serum-c", ledger.read_text(encoding="utf-8"))
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
