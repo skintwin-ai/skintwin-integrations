@@ -249,16 +249,41 @@ def _catalog_skus(product: dict, name: str) -> list[str]:
 
 
 def shopify_catalog_commands(product: dict) -> list[dict]:
+    if not isinstance(product, dict):
+        return []
     formula_id = formula_id_from_shopify(product)
-    if formula_id is None:
+    if formula_id is not None:
+        name = _text(product.get("title") or product.get("name"), "name")
+        return [
+            {
+                "command": "catalog_sku",
+                "args": {"sku_id": sku, "formula_id": formula_id, "name": name},
+            }
+            for sku in _catalog_skus(product, name)
+        ]
+    named: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    variants = product.get("variants") if isinstance(product.get("variants"), list) else []
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        sku = variant.get("sku")
+        if not isinstance(sku, str) or not sku.strip() or sku.strip() in seen:
+            continue
+        variant_formula = formula_id_from_shopify(variant)
+        if variant_formula is None:
+            continue
+        seen.add(sku.strip())
+        named.append((sku.strip(), variant_formula))
+    if not named:
         return []
     name = _text(product.get("title") or product.get("name"), "name")
     return [
         {
             "command": "catalog_sku",
-            "args": {"sku_id": sku, "formula_id": formula_id, "name": name},
+            "args": {"sku_id": sku, "formula_id": variant_formula, "name": name},
         }
-        for sku in _catalog_skus(product, name)
+        for sku, variant_formula in named
     ]
 
 
