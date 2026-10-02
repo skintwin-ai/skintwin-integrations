@@ -2789,6 +2789,65 @@ class SettlementRouteTests(unittest.TestCase):
                 again = wix.WixWebhookHandler("secret").on_booking_cancelled(omitted)
                 self.assertEqual(again["recorded"], {"ok": True, "count": 0})
                 self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                split = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "book-split:0",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 2000,
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "book-split:1",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 2000,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(split.returncode, 0, split.stderr or split.stdout)
+                split_text = ledger.read_text(encoding="utf-8")
+                mismatched = {
+                    "id": "book-split",
+                    "status": "cancelled",
+                    "services": [{"name": "Facial"}, {"delivery": {**delivery, "milligrams": 1000}}],
+                }
+                with self.assertRaises(wix.WebhookError):
+                    wix.WixWebhookHandler("secret").on_booking_cancelled(mismatched)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), split_text)
+                both = {
+                    "id": "book-split",
+                    "status": "cancelled",
+                    "services": [{"name": "Facial"}, {"delivery": delivery}],
+                }
+                cancelled_both = wix.WixWebhookHandler("secret").on_booking_cancelled(both)
+                self.assertEqual(cancelled_both["recorded"], {"ok": True, "count": 2})
+                returned_both = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "return:book-split:0"', returned_both)
+                self.assertIn('"transfer_id": "return:book-split:1"', returned_both)
+                self.assertNotIn('"transfer_id": "return:xfer-cape-town"', returned_both)
+                again_both = wix.WixWebhookHandler("secret").on_booking_cancelled(both)
+                self.assertEqual(again_both["recorded"], {"ok": True, "count": 0})
+                self.assertEqual(ledger.read_text(encoding="utf-8"), returned_both)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)

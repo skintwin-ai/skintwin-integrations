@@ -993,27 +993,49 @@ def _recorded_wix_deliveries(booking: dict) -> list[dict]:
     return list(found.values())
 
 
+def _reverse_transfer(args: dict) -> dict:
+    return {
+        "command": "transfer",
+        "args": {
+            "transfer_id": f"return:{args['transfer_id']}",
+            "sku_id": args["sku_id"],
+            "batch_id": args["batch_id"],
+            "source": args["destination"],
+            "destination": args["source"],
+            "milligrams": args["milligrams"],
+        },
+    }
+
+
+def _same_transfer(prior: dict, args: dict) -> bool:
+    return all(prior.get(key) == args.get(key) for key in ("sku_id", "batch_id", "source", "destination", "milligrams"))
+
+
 def wix_return_commands(booking: dict) -> list[dict]:
-    """A cancelled booking sends the named delivery back to its source."""
+    """A cancelled booking sends every recorded delivery back to its source.
+
+    A delivery the payload names is returned only when it matches the recorded movement.
+    A different quantity is rejected and leaves the other deliveries unmoved.
+    A delivery the payload omits is returned from the recorded transfer.
+    """
     forwards = wix_delivery_commands(booking)
+    recorded = {command["args"]["transfer_id"]: command["args"] for command in _recorded_wix_deliveries(booking)}
     if not forwards:
-        forwards = _recorded_wix_deliveries(booking)
+        forwards = [{"command": "transfer", "args": args} for args in recorded.values()]
     commands = []
+    named_ids: set[str] = set()
     for command in forwards:
         args = command["args"]
-        commands.append(
-            {
-                "command": "transfer",
-                "args": {
-                    "transfer_id": f"return:{args['transfer_id']}",
-                    "sku_id": args["sku_id"],
-                    "batch_id": args["batch_id"],
-                    "source": args["destination"],
-                    "destination": args["source"],
-                    "milligrams": args["milligrams"],
-                },
-            }
-        )
+        named_ids.add(args["transfer_id"])
+        reverse = _reverse_transfer(args)["args"]
+        prior = recorded.get(args["transfer_id"])
+        if prior is not None and not _same_transfer(_reverse_transfer(prior)["args"], reverse):
+            raise StageRejection("id already exists")
+        commands.append({"command": "transfer", "args": reverse})
+    for transfer_id, args in recorded.items():
+        if transfer_id in named_ids:
+            continue
+        commands.append(_reverse_transfer(args))
     return commands
 
 
