@@ -425,6 +425,125 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_blank_product_name_records_the_named_title_once(self) -> None:
+        preferred = shopify_catalog_commands(
+            {
+                "title": "Vitamin C serum",
+                "name": "Other",
+                "formula_id": "serum-c",
+                "variants": [{"sku": "sku-serum"}],
+            }
+        )
+        self.assertEqual(preferred[0]["args"]["name"], "Vitamin C serum")
+        fallen = shopify_catalog_commands(
+            {
+                "title": "  ",
+                "name": " Gentle cleanser ",
+                "formula_id": "cleanser",
+                "variants": [{"sku": " "}],
+            }
+        )
+        self.assertEqual(fallen[0]["args"]["name"], "Gentle cleanser")
+        self.assertEqual(fallen[0]["args"]["sku_id"], "Gentle cleanser")
+        owned = opencart_catalog_commands(
+            {
+                "name": "Gentle cleanser",
+                "title": "Other",
+                "formulaId": "cleanser",
+                "sku": "sku-cleanser",
+            }
+        )
+        self.assertEqual(owned[0]["args"]["name"], "Gentle cleanser")
+        opencart = opencart_catalog_commands(
+            {
+                "name": "  ",
+                "title": " Gentle cleanser ",
+                "formula_id": "cleanser",
+                "model": "sku-cleanser",
+            }
+        )
+        self.assertEqual(opencart[0]["args"]["name"], "Gentle cleanser")
+        self.assertEqual(opencart[0]["args"]["sku_id"], "sku-cleanser")
+        product = {
+            "title": "  ",
+            "name": "Gentle cleanser",
+            "formula_id": "cleanser",
+            "variants": [{"sku": "sku-cleanser"}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                missing = record_shopify_catalog(
+                    {"title": "  ", "name": "  ", "formula_id": "cleanser", "sku": "sku-missing"}
+                )
+                self.assertFalse(missing["ok"])
+                plain = record_shopify_catalog({"title": "  ", "name": "Shelf", "tags": "retail", "sku": "sku-shelf"})
+                self.assertIsNone(plain)
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 2000]],
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                recorded = record_shopify_catalog(product)
+                self.assertTrue(recorded["ok"])
+                self.assertEqual(recorded["count"], 1)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn("Gentle cleanser", text)
+                self.assertIn("sku-cleanser", text)
+                again = record_shopify_catalog(product)
+                self.assertTrue(again["ok"])
+                self.assertEqual(again["count"], 0)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                changed = record_shopify_catalog({**product, "formula_id": "serum-c"})
+                self.assertFalse(changed["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
     def test_a_variant_formula_metafield_catalogs_that_sku_once(self) -> None:
         owned = shopify_catalog_commands(
             {

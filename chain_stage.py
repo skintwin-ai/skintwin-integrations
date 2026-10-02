@@ -272,12 +272,17 @@ def _catalog_skus(product: dict, name: str) -> list[str]:
     return [_text(_named_sku(product) or name, "sku")]
 
 
+def _catalog_name(product: dict) -> str:
+    """A present title wins. A blank title falls through to the product name."""
+    return _text(_named(product, "title", "name"), "name")
+
+
 def shopify_catalog_commands(product: dict) -> list[dict]:
     if not isinstance(product, dict):
         return []
     formula_id = formula_id_from_shopify(product)
     if formula_id is not None:
-        name = _text(product.get("title") or product.get("name"), "name")
+        name = _catalog_name(product)
         return [
             {
                 "command": "catalog_sku",
@@ -301,7 +306,7 @@ def shopify_catalog_commands(product: dict) -> list[dict]:
         named.append((sku, variant_formula))
     if not named:
         return []
-    name = _text(product.get("title") or product.get("name"), "name")
+    name = _catalog_name(product)
     return [
         {
             "command": "catalog_sku",
@@ -549,7 +554,7 @@ def opencart_catalog_commands(product: dict) -> list[dict]:
     if not isinstance(product, dict):
         return []
     mapped = {
-        "title": product.get("name") or product.get("title"),
+        "title": _named(product, "name", "title"),
         "sku": _named_sku(product) or _named(product, "model"),
         "tags": product.get("tags") if product.get("tags") is not None else product.get("tag"),
         "formula_id": _named(product, "formula_id", "formulaId"),
