@@ -23,6 +23,7 @@ from chain_stage import (
     record_shopify_returns,
     record_shopify_settlement,
     return_for_refund,
+    record_wix_cancellation,
     record_wix_deliveries,
     respond,
     settlement_for_payment,
@@ -37,6 +38,7 @@ from chain_stage import (
     shopify_return_commands,
     shopify_settlement_commands,
     wix_delivery_commands,
+    wix_return_commands,
 )
 
 
@@ -2408,6 +2410,126 @@ class SettlementRouteTests(unittest.TestCase):
                 with self.assertRaises(wix.WebhookError):
                     wix.WixWebhookHandler("secret").on_booking_updated(changed)
                 self.assertEqual(ledger.read_text(encoding="utf-8"), recorded)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
+    def test_a_cancelled_wix_booking_sends_the_named_delivery_back_once(self) -> None:
+        delivery = {
+            "sku_id": "sku-serum-c",
+            "batch_id": "batch-1",
+            "source": "plant",
+            "destination": "cape-town",
+            "milligrams": 2000,
+        }
+        booking = {"id": "book-1", "services": [{"name": "Facial"}, {"delivery": delivery}]}
+        returned = wix_return_commands(booking)
+        self.assertEqual(returned[0]["args"]["transfer_id"], "return:book-1:1")
+        self.assertEqual(returned[0]["args"]["source"], "cape-town")
+        self.assertEqual(returned[0]["args"]["destination"], "plant")
+        self.assertEqual(returned[0]["args"]["milligrams"], 2000)
+        self.assertEqual(wix_return_commands({"id": "book-1", "services": [{"name": "Facial"}]}), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                wix = self._webhook_module("wix")
+                plain = wix.WixWebhookHandler("secret").on_booking_cancelled(
+                    {"id": "book-plain", "services": [{"name": "Facial"}]}
+                )
+                self.assertIsNone(plain["recorded"])
+                self.assertFalse(ledger.exists())
+                with self.assertRaises(wix.WebhookError):
+                    wix.WixWebhookHandler("secret").on_booking_cancelled(booking)
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "cleanser",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                created = wix.WixWebhookHandler("secret").on_booking_created(booking)
+                self.assertEqual(created["recorded"], {"ok": True, "count": 1})
+                cancelled = wix.WixWebhookHandler("secret").on_booking_cancelled(booking)
+                self.assertEqual(cancelled["recorded"], {"ok": True, "count": 1})
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "return:book-1:1"', text)
+                again = wix.WixWebhookHandler("secret").on_booking_cancelled(booking)
+                self.assertEqual(again["recorded"], {"ok": True, "count": 0})
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                changed = {
+                    **booking,
+                    "services": [{"name": "Facial"}, {"delivery": {**delivery, "milligrams": 1000}}],
+                }
+                with self.assertRaises(wix.WebhookError):
+                    wix.WixWebhookHandler("secret").on_booking_cancelled(changed)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)

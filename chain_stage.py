@@ -812,9 +812,38 @@ def record_opencart_fulfillments(order: dict) -> dict | None:
     return _commit_idempotent(commands)
 
 
+def wix_return_commands(booking: dict) -> list[dict]:
+    """A cancelled booking sends the named delivery back to its source."""
+    commands = []
+    for command in wix_delivery_commands(booking):
+        args = command["args"]
+        commands.append(
+            {
+                "command": "transfer",
+                "args": {
+                    "transfer_id": f"return:{args['transfer_id']}",
+                    "sku_id": args["sku_id"],
+                    "batch_id": args["batch_id"],
+                    "source": args["destination"],
+                    "destination": args["source"],
+                    "milligrams": args["milligrams"],
+                },
+            }
+        )
+    return commands
+
+
 def record_wix_deliveries(booking: dict) -> dict | None:
     try:
         commands = wix_delivery_commands(booking)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_idempotent(commands)
+
+
+def record_wix_cancellation(booking: dict) -> dict | None:
+    try:
+        commands = wix_return_commands(booking)
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}
     return _commit_idempotent(commands)
