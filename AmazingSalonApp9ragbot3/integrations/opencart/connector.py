@@ -27,6 +27,43 @@ from ..common.models import (
 logger = logging.getLogger(__name__)
 
 
+def _chain_stage():
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import chain_stage
+
+    return chain_stage
+
+
+def _reject_ledger(recorded, label: str):
+    if isinstance(recorded, dict) and recorded.get("ok") is False:
+        raise IntegrationError(recorded.get("error") or f"supply chain rejected the {label}")
+
+
+def _record_named_opencart_sale(order, order_id=None):
+    """An appointment that already names a shipped sale records the same sale a webhook would."""
+    if not isinstance(order, dict):
+        return None
+    payload = dict(order)
+    if order_id and not str(payload.get("order_id") or payload.get("id") or "").strip():
+        payload["order_id"] = order_id
+    status = str(payload.get("status") or payload.get("new_status") or payload.get("order_status") or "").strip()
+    if (
+        not status
+        and payload.get("status_id") is not None
+        and payload.get("order_status_id") is None
+        and payload.get("new_status_id") is None
+    ):
+        payload["order_status_id"] = payload["status_id"]
+    recorded = _chain_stage().record_opencart_fulfillments(payload)
+    _reject_ledger(recorded, "order")
+    return recorded
+
+
 class OpenCartConnector(BaseConnector):
     """
     Connector for OpenCart REST API.
@@ -397,6 +434,7 @@ class OpenCartConnector(BaseConnector):
         Returns:
             Dict: Created order data
         """
+        _record_named_opencart_sale(appointment_data)
         # Set customer
         self.set_customer(
             first_name=appointment_data.get('client_first_name', ''),
@@ -434,6 +472,7 @@ class OpenCartConnector(BaseConnector):
         Returns:
             Dict: Updated order data
         """
+        _record_named_opencart_sale(appointment_data, appointment_id)
         # OpenCart doesn't have direct order update
         # Update via order history
         if appointment_data.get('status'):

@@ -6663,6 +6663,227 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_posted_opencart_appointment_records_the_named_sale_once(self) -> None:
+        product = {
+            "sku": "sku-serum-c",
+            "location": "cape-town",
+            "milligrams": 2000,
+            "price": "185.00",
+            "quantity": "1",
+        }
+        order = {
+            "order_id": 9,
+            "status": "complete",
+            "currency_code": "ZAR",
+            "client_email": "adaeze.obi@example.com",
+            "products": [product],
+            "items": [{"product_id": 9, "quantity": 1}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationError = importlib.import_module("integrations.common.exceptions").IntegrationError
+                OpenCartConnector = importlib.import_module(
+                    "integrations.opencart.connector"
+                ).OpenCartConnector
+
+                class _Posted(OpenCartConnector):
+                    def __init__(self):
+                        self.calls = []
+
+                    def set_customer(self, first_name, last_name, email, telephone):
+                        self.calls.append("customer")
+                        return {}
+
+                    def add_to_cart(self, product_id, quantity=1, options=None):
+                        self.calls.append("cart")
+                        return {}
+
+                    def create_order(self):
+                        self.calls.append("order")
+                        return {"order_id": 9}
+
+                    def update_order_history(self, order_id, order_status_id, comment="", notify=False):
+                        self.calls.append(("history", order_id, order_status_id))
+                        return {"order_id": order_id}
+
+                connector = _Posted()
+                opened = connector.create_appointment(
+                    {
+                        "client_email": "adaeze.obi@example.com",
+                        "items": [{"product_id": 9, "quantity": 1}],
+                    }
+                )
+                self.assertEqual(opened.get("order_id"), 9)
+                self.assertEqual(connector.calls, ["customer", "cart", "order"])
+                self.assertFalse(ledger.exists())
+                with self.assertRaises(IntegrationError):
+                    connector.create_appointment(
+                        {
+                            "order_id": 9,
+                            "status": "complete",
+                            "products": [{**product, "milligrams": "lots"}],
+                        }
+                    )
+                self.assertEqual(connector.calls, ["customer", "cart", "order"])
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {
+                                        "ingredient_id": "glycerin",
+                                        "inci": "Glycerin",
+                                        "cas": "56-81-5",
+                                    },
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 8000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 8000,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                created = connector.create_appointment(order)
+                self.assertEqual(created.get("order_id"), 9)
+                self.assertEqual(
+                    connector.calls,
+                    ["customer", "cart", "order", "customer", "cart", "order"],
+                )
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "9:0:sku-serum-c"', text)
+                self.assertIn('"milligrams": 2000', text)
+                self.assertIn('"amount_cents": 18500', text)
+                self.assertIn('"currency": "ZAR"', text)
+                again = connector.create_appointment(order)
+                self.assertEqual(connector.calls.count("order"), 3)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                with self.assertRaises(IntegrationError):
+                    connector.create_appointment(
+                        {**order, "products": [{**product, "location": "johannesburg"}]}
+                    )
+                self.assertEqual(connector.calls.count("order"), 3)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                updated = connector.update_appointment(
+                    "11",
+                    {"status": "complete", "currency_code": "ZAR", "products": [product]},
+                )
+                self.assertEqual(updated.get("order_id"), 11)
+                self.assertIn(("history", 11, 1), connector.calls)
+                moved = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "11:0:sku-serum-c"', moved)
+                repeated = connector.update_appointment(
+                    "11",
+                    {"status": "complete", "currency_code": "ZAR", "products": [product]},
+                )
+                self.assertEqual(repeated.get("order_id"), 11)
+                self.assertEqual(connector.calls.count(("history", 11, 1)), 2)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), moved)
+                with self.assertRaises(IntegrationError):
+                    connector.update_appointment(
+                        "11",
+                        {
+                            "status": "complete",
+                            "products": [{**product, "location": "johannesburg"}],
+                        },
+                    )
+                self.assertEqual(connector.calls.count(("history", 11, 1)), 2)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), moved)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
 
 if __name__ == "__main__":
     unittest.main()
