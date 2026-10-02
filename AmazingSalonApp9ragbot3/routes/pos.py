@@ -16,6 +16,17 @@ from utils.config_utils import ConfigManager
 bp = Blueprint('pos', __name__)
 
 
+def _named_text(source, *keys):
+    """The first non-blank string wins. A blank value falls through."""
+    if not hasattr(source, "get"):
+        return ""
+    for key in keys:
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def _settle_chain_payment(payment, amount):
     """Record settlement when this payment closes a supply-chain fulfillment."""
     import sys
@@ -28,11 +39,13 @@ def _settle_chain_payment(payment, amount):
 
     use_shared_ledger()
     payload = {
-        "fulfillment_id": payment.get("fulfillment_id"),
-        "settlement_id": payment.get("settlement_id"),
-        "amount_cents": payment.get("amount_cents"),
+        "fulfillment_id": payment.get("fulfillment_id") if hasattr(payment, "get") else None,
+        "fulfillmentId": payment.get("fulfillmentId") if hasattr(payment, "get") else None,
+        "settlement_id": payment.get("settlement_id") if hasattr(payment, "get") else None,
+        "settlementId": payment.get("settlementId") if hasattr(payment, "get") else None,
+        "amount_cents": payment.get("amount_cents") if hasattr(payment, "get") else None,
         "amount": amount,
-        "currency": payment.get("currency") or "USD",
+        "currency": (payment.get("currency") if hasattr(payment, "get") else None) or "USD",
     }
     return settlement_for_payment(payload)
 
@@ -57,7 +70,7 @@ def _settle_paystack(transaction):
     return record_paystack_settlement(transaction)
 
 
-def _return_chain_sale(fulfillment_id, transaction_id):
+def _return_chain_sale(fulfillment_id, transaction_id, return_id=None):
     """Return the sale before the processor refunds the payment."""
     import sys
     from pathlib import Path
@@ -69,11 +82,12 @@ def _return_chain_sale(fulfillment_id, transaction_id):
 
     if not isinstance(fulfillment_id, str) or not fulfillment_id.strip():
         return None
+    named_return = return_id.strip() if isinstance(return_id, str) and return_id.strip() else ""
     use_shared_ledger()
     return return_for_refund(
         {
             "fulfillment_id": fulfillment_id.strip(),
-            "return_id": f"return:{transaction_id}:{fulfillment_id.strip()}",
+            "return_id": named_return or f"return:{transaction_id}:{fulfillment_id.strip()}",
         }
     )
 
@@ -187,8 +201,8 @@ def initialize_paystack():
             'client_id': client_id,
             'description': description,
             'points_redeemed': points_to_redeem,
-            'fulfillment_id': data.get('fulfillment_id') if isinstance(data.get('fulfillment_id'), str) else None,
-            'settlement_id': data.get('settlement_id') if isinstance(data.get('settlement_id'), str) else None,
+            'fulfillment_id': _named_text(data, 'fulfillment_id', 'fulfillmentId') or None,
+            'settlement_id': _named_text(data, 'settlement_id', 'settlementId') or None,
             'custom_fields': [
                 {
                     'display_name': 'Client ID',
@@ -267,7 +281,7 @@ def verify_paystack():
             
             # Get amount in dollars
             amount = float(response_data['data']['amount']) / 100  # Convert from kobo/cents to dollars
-            fulfillment_id = metadata.get('fulfillment_id') if isinstance(metadata, dict) else None
+            fulfillment_id = _named_text(metadata, 'fulfillment_id', 'fulfillmentId') or None
             settled = _settle_paystack(response_data)
             if settled is not None:
                 body, status = settled
@@ -487,7 +501,7 @@ def create_transaction_route():
                     payment_intent_id=payment_intent.id,
                     points_used=points_to_redeem,
                     payment_provider=payment_provider,
-                    fulfillment_id=payment.get("fulfillment_id"),
+                    fulfillment_id=_named_text(payment, "fulfillment_id", "fulfillmentId") or None,
                 )
                 transaction_id = transaction.id
                 
@@ -524,7 +538,7 @@ def create_transaction_route():
                     amount=amount, 
                     description=description,
                     points_used=points_to_redeem,
-                    fulfillment_id=payment.get("fulfillment_id"),
+                    fulfillment_id=_named_text(payment, "fulfillment_id", "fulfillmentId") or None,
                 )
                 
                 # Update client's loyalty points in old system
@@ -680,7 +694,7 @@ def confirm_payment():
                 payment_intent_id=payment_intent_id,
                 points_used=0,  # Cannot redeem points at this stage
                 payment_provider=payment_provider,
-                fulfillment_id=data.get('fulfillment_id'),
+                fulfillment_id=_named_text(data, "fulfillment_id", "fulfillmentId") or None,
             )
             transaction_id = transaction.id
             
@@ -713,7 +727,7 @@ def confirm_payment():
                 amount=amount,
                 description=description,
                 points_used=0,
-                fulfillment_id=data.get('fulfillment_id'),
+                fulfillment_id=_named_text(data, "fulfillment_id", "fulfillmentId") or None,
             )
             
             # Update client's loyalty points in old system
@@ -800,10 +814,22 @@ def refund_transaction(id):
             flash('This transaction has no associated payment to refund')
             return redirect(url_for('pos.index'))
 
-        fulfillment_id = _payment_field(transaction, "fulfillment_id")
-        if request.is_json:
-            fulfillment_id = fulfillment_id or (request.get_json(silent=True) or {}).get("fulfillment_id")
-        returned = _return_chain_sale(fulfillment_id, id)
+        fulfillment_id = ""
+        for key in ("fulfillment_id", "fulfillmentId"):
+            value = _payment_field(transaction, key)
+            if isinstance(value, str) and value.strip():
+                fulfillment_id = value.strip()
+                break
+        refund_body = request.get_json(silent=True) if request.is_json else {}
+        if not isinstance(refund_body, dict):
+            refund_body = {}
+        if not fulfillment_id:
+            fulfillment_id = _named_text(refund_body, "fulfillment_id", "fulfillmentId")
+        returned = _return_chain_sale(
+            fulfillment_id,
+            id,
+            _named_text(refund_body, "return_id", "returnId"),
+        )
         if returned is not None:
             body, status = returned
             if status != 200:

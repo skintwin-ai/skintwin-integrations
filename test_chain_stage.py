@@ -2878,6 +2878,258 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_payment_named_by_a_blank_fulfillment_id_records_fulfillment_id_once(self) -> None:
+        self.assertIsNone(
+            settlement_for_payment(
+                {"fulfillment_id": "  ", "fulfillmentId": "  ", "amount": 10, "currency": "USD"}
+            )
+        )
+        previous = os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+        try:
+            preferred, preferred_status = settlement_for_payment(
+                {
+                    "fulfillment_id": "order-retail",
+                    "fulfillmentId": "other",
+                    "settlement_id": "pay-snake",
+                    "settlementId": "pay-camel",
+                    "amount": 45.5,
+                    "currency": "ZAR",
+                }
+            )
+            self.assertEqual(preferred_status, 200, preferred)
+            self.assertEqual(preferred["artifact"]["fulfillment_id"], "order-retail")
+            self.assertEqual(preferred["artifact"]["settlement_id"], "pay-snake")
+            fallen, fallen_status = settlement_for_payment(
+                {
+                    "fulfillment_id": "  ",
+                    "fulfillmentId": " order-retail ",
+                    "settlement_id": "  ",
+                    "settlementId": " pay-camel ",
+                    "amount_cents": 18500,
+                    "currency": "zar",
+                }
+            )
+            self.assertEqual(fallen_status, 200, fallen)
+            self.assertEqual(fallen["artifact"]["fulfillment_id"], "order-retail")
+            self.assertEqual(fallen["artifact"]["settlement_id"], "pay-camel")
+            returned = return_for_refund(
+                {
+                    "fulfillment_id": "order-retail",
+                    "fulfillmentId": "other",
+                    "return_id": "return:tx-1:order-retail",
+                    "returnId": "return:other",
+                }
+            )
+            self.assertEqual(returned[1], 200)
+            self.assertEqual(returned[0]["artifact"]["fulfillment_id"], "order-retail")
+            self.assertEqual(returned[0]["artifact"]["return_id"], "return:tx-1:order-retail")
+            fallen_return = return_for_refund(
+                {"fulfillment_id": "  ", "fulfillmentId": "order-retail", "returnId": " return:camel "}
+            )
+            self.assertEqual(fallen_return[1], 200)
+            self.assertEqual(fallen_return[0]["artifact"]["fulfillment_id"], "order-retail")
+            self.assertEqual(fallen_return[0]["artifact"]["return_id"], "return:camel")
+            self.assertIsNone(return_for_refund({"fulfillment_id": "  ", "returnId": "return:camel"}))
+            charge = {
+                "data": {
+                    "amount": 18500,
+                    "currency": "NGN",
+                    "reference": "salon-camel",
+                    "metadata": {
+                        "fulfillment_id": "  ",
+                        "fulfillmentId": "order-retail",
+                        "settlement_id": "  ",
+                        "settlementId": "pay-camel",
+                    },
+                }
+            }
+            self.assertEqual(paystack_settlement(charge)["fulfillment_id"], "order-retail")
+            self.assertEqual(paystack_settlement(charge)["settlement_id"], "pay-camel")
+            self.assertIsNone(
+                paystack_settlement({"data": {"amount": 18500, "metadata": {"fulfillment_id": "  "}}})
+            )
+            explicit = shopify_settlement_commands(
+                {
+                    "order_number": 9,
+                    "currency": "ZAR",
+                    "total_price": "185.00",
+                    "fulfillment_id": "  ",
+                    "fulfillmentId": "9:0:sku-serum-c",
+                    "settlementId": "pay-camel",
+                }
+            )
+            self.assertEqual(explicit[0]["args"]["fulfillment_id"], "9:0:sku-serum-c")
+            self.assertEqual(explicit[0]["args"]["settlement_id"], "pay-camel")
+            owned = shopify_settlement_commands(
+                {
+                    "order_number": 9,
+                    "total_price": "185.00",
+                    "fulfillment_id": "9:0:sku-serum-c",
+                    "fulfillmentId": "other",
+                }
+            )
+            self.assertEqual(owned[0]["args"]["fulfillment_id"], "9:0:sku-serum-c")
+            opencart = opencart_settlement_commands(
+                {
+                    "order_id": 4,
+                    "paid": True,
+                    "currency_code": "ZAR",
+                    "total": "185.00",
+                    "fulfillment_id": "  ",
+                    "fulfillmentId": "4:0:sku-serum-c",
+                    "settlementId": "pay-camel",
+                }
+            )
+            self.assertEqual(opencart[0]["args"]["fulfillment_id"], "4:0:sku-serum-c")
+            self.assertEqual(opencart[0]["args"]["settlement_id"], "pay-camel")
+            self.assertEqual(
+                opencart_settlement_commands({"order_id": 4, "paid": True, "fulfillment_id": "  "}),
+                [],
+            )
+        finally:
+            if previous is not None:
+                os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                unnamed = settlement_for_payment(
+                    {"fulfillmentId": "  ", "settlementId": "pay-camel", "amount_cents": 100}
+                )
+                self.assertIsNone(unnamed)
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "cleanser",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "order-retail",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                settled, settled_status = settlement_for_payment(
+                    {
+                        "fulfillment_id": "  ",
+                        "fulfillmentId": "order-retail",
+                        "settlementId": "pay-camel",
+                        "amount_cents": 18500,
+                        "currency": "ZAR",
+                    }
+                )
+                self.assertEqual(settled_status, 200, settled)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn("pay-camel", text)
+                again, again_status = settlement_for_payment(
+                    {
+                        "fulfillmentId": "order-retail",
+                        "settlement_id": "pay-camel",
+                        "amount_cents": 18500,
+                        "currency": "ZAR",
+                    }
+                )
+                self.assertEqual(again_status, 400)
+                self.assertFalse(again["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                returned_body, returned_status = return_for_refund(
+                    {"fulfillmentId": "order-retail", "return_id": "  ", "returnId": "return:camel"}
+                )
+                self.assertEqual(returned_status, 200, returned_body)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn("return:camel", text)
+                returned_again, returned_again_status = return_for_refund(
+                    {"fulfillment_id": "order-retail", "returnId": "return:camel"}
+                )
+                self.assertEqual(returned_again_status, 400)
+                self.assertFalse(returned_again["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
     def test_rejects_a_bad_currency(self) -> None:
         body, status = respond(
             {
