@@ -9372,6 +9372,252 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_canceled_wix_update_returns_the_delivery_when_the_payload_omits_it(self) -> None:
+        delivery = {
+            "sku_id": "sku-serum-c",
+            "batch_id": "batch-1",
+            "source": "plant",
+            "destination": "cape-town",
+            "milligrams": 2000,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationError = importlib.import_module("integrations.common.exceptions").IntegrationError
+                WixBookingsConnector = importlib.import_module(
+                    "integrations.wix.connector"
+                ).WixBookingsConnector
+
+                class _Posted(WixBookingsConnector):
+                    def __init__(self):
+                        self.updated = []
+
+                    def get(self, endpoint, params=None):
+                        return {"booking": {"id": endpoint, "revision": "1"}}
+
+                    def put(self, endpoint, data=None):
+                        self.updated.append(endpoint)
+                        body = (data or {}).get("booking", {})
+                        booking_id = body.get("id")
+                        if booking_id == "book-sync":
+                            return {"booking": {"id": "book-sync", "status": "CANCELED"}}
+                        return {"booking": {"id": booking_id, "revision": "2"}}
+
+                connector = _Posted()
+                early = connector.update_appointment("book-1", {"status": "CANCELED"})
+                self.assertEqual(early.get("id"), "book-1")
+                self.assertEqual(connector.updated, ["/bookings/v2/bookings/book-1"])
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {
+                                        "ingredient_id": "glycerin",
+                                        "inci": "Glycerin",
+                                        "cas": "56-81-5",
+                                    },
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 10000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 10000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 10000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "xfer-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 1000,
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "book-1:1",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 2000,
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "book-decline:1",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 2000,
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "book-sync:1",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 2000,
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "book-2:0",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 1000,
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "return:book-2:0",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "cape-town",
+                                        "destination": "plant",
+                                        "milligrams": 500,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                declined = connector.update_appointment("book-decline", {"status": "DECLINED"})
+                self.assertEqual(declined.get("id"), "book-decline")
+                held = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "book-decline:1"', held)
+                self.assertNotIn('"transfer_id": "return:book-decline:1"', held)
+                updated = connector.update_appointment("book-1", {"status": "CANCELED"})
+                self.assertEqual(updated.get("id"), "book-1")
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "return:book-1:1"', text)
+                self.assertIn('"source": "cape-town"', text)
+                self.assertIn('"destination": "plant"', text)
+                self.assertNotIn('"transfer_id": "return:xfer-cape-town"', text)
+                self.assertNotIn('"transfer_id": "return:book-decline:1"', text)
+                again = connector.update_appointment("book-1", {"status": "cancelled"})
+                self.assertEqual(again.get("id"), "book-1")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                absent = connector.update_appointment("book-19", {"status": "CANCELED"})
+                self.assertEqual(absent.get("id"), "book-19")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                echoed = connector.update_appointment(
+                    "book-sync",
+                    {"services": [{"name": "Facial"}]},
+                )
+                self.assertEqual(echoed.get("status"), "CANCELED")
+                echoed_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "return:book-sync:1"', echoed_text)
+                self.assertNotIn('"transfer_id": "return:xfer-cape-town"', echoed_text)
+                before_named = len(connector.updated)
+                with self.assertRaises(IntegrationError):
+                    connector.update_appointment(
+                        "book-1",
+                        {
+                            "status": "CANCELED",
+                            "services": [{"delivery": {**delivery, "milligrams": 1000}}],
+                        },
+                    )
+                self.assertEqual(len(connector.updated), before_named)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                before_conflict = len(connector.updated)
+                with self.assertRaises(IntegrationError):
+                    connector.update_appointment("book-2", {"status": "CANCELED"})
+                self.assertEqual(len(connector.updated), before_conflict + 1)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
 
 if __name__ == "__main__":
     unittest.main()

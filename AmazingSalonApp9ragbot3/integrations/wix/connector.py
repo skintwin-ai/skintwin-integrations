@@ -61,6 +61,18 @@ def _names_wix_delivery(appointment_data) -> bool:
     )
 
 
+_WIX_CANCELLED = frozenset({"canceled", "cancelled"})
+
+
+def _wix_update_cancelled(appointment_data) -> bool:
+    """Wix spells the status CANCELED. A declined booking is not a cancellation."""
+    if not isinstance(appointment_data, dict):
+        return False
+    nested = appointment_data.get("booking") if isinstance(appointment_data.get("booking"), dict) else appointment_data
+    status = str(nested.get("status") or "").strip().lower()
+    return status in _WIX_CANCELLED
+
+
 def _record_wix_cancellation(booking_id):
     """A cancelled booking returns the delivery that booking already recorded."""
     booking = str(booking_id or "").strip()
@@ -426,7 +438,11 @@ class WixBookingsConnector(BaseConnector):
         Returns:
             Dict: Updated booking data
         """
-        _record_named_wix_delivery(appointment_data, appointment_id)
+        omitted_cancel = _wix_update_cancelled(appointment_data) and not _names_wix_delivery(
+            appointment_data
+        )
+        if not omitted_cancel:
+            _record_named_wix_delivery(appointment_data, appointment_id)
         try:
             # Get current booking for revision
             current = self.get_booking(appointment_id)
@@ -447,8 +463,16 @@ class WixBookingsConnector(BaseConnector):
             logger.error(f"Failed to update Wix booking {appointment_id}: {e}")
             raise IntegrationError(f"Failed to update booking: {e}", platform=self.PLATFORM_NAME)
         # Wix is already called. A delivery on the updated booking is the same transfer a webhook would record.
-        if updated_booking is not appointment_data:
+        # A cancellation that omits the delivery returns the movement this booking already recorded.
+        response_omits = (
+            updated_booking is not appointment_data
+            and _wix_update_cancelled(updated_booking)
+            and not _names_wix_delivery(updated_booking)
+        )
+        if updated_booking is not appointment_data and not omitted_cancel and not response_omits:
             _record_named_wix_delivery(updated_booking, appointment_id)
+        if omitted_cancel or (response_omits and not _names_wix_delivery(appointment_data)):
+            _record_wix_cancellation(appointment_id)
         return updated_booking
     
     def cancel_appointment(self, appointment_id: str) -> bool:
