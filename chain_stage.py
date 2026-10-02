@@ -251,12 +251,13 @@ def opencart_catalog_commands(product: dict) -> list[dict]:
 
 
 _OPENCART_SHIPPED = frozenset({"shipped", "complete", "completed", "delivered", "fulfilled"})
+_OPENCART_PAID = frozenset({"paid", "complete", "completed", "processed"})
 
 
 def opencart_fulfillment_commands(order: dict) -> list[dict]:
     if not isinstance(order, dict):
         raise StageRejection("order is required")
-    status = str(order.get("status") or order.get("new_status") or order.get("order_status") or "").strip().lower()
+    status = _opencart_status(order)
     if order.get("fulfilled") is not True and status not in _OPENCART_SHIPPED:
         return []
     items = []
@@ -279,6 +280,50 @@ def opencart_fulfillment_commands(order: dict) -> list[dict]:
             "line_items": items,
         }
     )
+
+
+def opencart_settlement_commands(order: dict) -> list[dict]:
+    """A paid OpenCart order settles the fulfillment its lines already name."""
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    status = _opencart_status(order)
+    if order.get("paid") is not True and status not in _OPENCART_PAID:
+        return []
+    items = []
+    for item in order.get("products") or order.get("line_items") or []:
+        if not isinstance(item, dict):
+            raise StageRejection("each product must be an object")
+        price = item.get("price")
+        quantity = item.get("quantity") or 1
+        if price is None and item.get("total") is not None:
+            price = item.get("total")
+            quantity = 1
+        if price is None:
+            continue
+        items.append(
+            {
+                "sku": item.get("sku") or item.get("model"),
+                "location": item.get("location"),
+                "milligrams": item.get("milligrams"),
+                "properties": item.get("properties"),
+                "price": price,
+                "quantity": _quantity(quantity) if price is not None else 1,
+            }
+        )
+    return shopify_settlement_commands(
+        {
+            "order_number": order.get("order_id") or order.get("order_number") or order.get("id"),
+            "currency": order.get("currency_code") or order.get("currency") or "USD",
+            "total_price": order.get("total"),
+            "fulfillment_id": order.get("fulfillment_id"),
+            "settlement_id": order.get("settlement_id"),
+            "line_items": items,
+        }
+    )
+
+
+def _opencart_status(order: dict) -> str:
+    return str(order.get("status") or order.get("new_status") or order.get("order_status") or "").strip().lower()
 
 
 def wix_delivery_commands(booking: dict) -> list[dict]:
@@ -328,10 +373,10 @@ def record_opencart_catalog(product: dict) -> dict | None:
 
 def record_opencart_fulfillments(order: dict) -> dict | None:
     try:
-        commands = opencart_fulfillment_commands(order)
+        commands = opencart_fulfillment_commands(order) + opencart_settlement_commands(order)
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}
-    return _commit_many(commands)
+    return _commit_idempotent(commands)
 
 
 def record_wix_deliveries(booking: dict) -> dict | None:
@@ -419,46 +464,68 @@ def _price_cents(value: object) -> int:
 
 def _commit_fulfillments(commands: list[dict]) -> dict | None:
     """Append new fulfillments. The same sale arriving again is not a second draw."""
+    return _commit_idempotent(commands)
+
+
+def _commit_idempotent(commands: list[dict]) -> dict | None:
+    """Append commands that are not already on the ledger with the same args."""
     if not commands:
         return None
-    same = _same_recorded_fulfillments(commands)
-    if same is True:
-        return {"ok": True, "count": 0}
-    if same is False:
+    fresh = _unrecorded(commands)
+    if fresh is None:
         return {"ok": False, "error": "id already exists"}
-    return _commit_many(commands)
+    if not fresh:
+        return {"ok": True, "count": 0}
+    return _commit_many(fresh)
 
 
-def _same_recorded_fulfillments(commands: list[dict]) -> bool | None:
+def _command_identity(command: dict) -> tuple[str, str] | None:
+    args = command.get("args") or {}
+    name = command.get("command")
+    if name == "fulfill":
+        return ("fulfill", str(args.get("fulfillment_id")))
+    if name == "settle":
+        return ("settle", str(args.get("settlement_id")))
+    return None
+
+
+def _unrecorded(commands: list[dict]) -> list[dict] | None:
     raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
     if not raw:
-        return None
+        return commands
     path = Path(raw)
     if not path.is_file():
-        return None
-    found: dict[str, dict] = {}
+        return commands
+    found: dict[tuple[str, str], dict] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         record = json.loads(line)
-        if record.get("command") != "fulfill":
+        identity = _command_identity(record)
+        if identity is None:
             continue
-        args = record.get("args") or {}
-        found[str(args.get("fulfillment_id"))] = args
-    matched = 0
+        found[identity] = record.get("args") or {}
+    fresh: list[dict] = []
     for command in commands:
-        args = command["args"]
-        prior = found.get(str(args.get("fulfillment_id")))
-        if prior is None:
+        identity = _command_identity(command)
+        if identity is None:
+            fresh.append(command)
             continue
-        if prior != args:
-            return False
-        matched += 1
-    if matched == 0:
-        return None
-    if matched == len(commands):
-        return True
-    return False
+        prior = found.get(identity)
+        if prior is None:
+            fresh.append(command)
+            continue
+        if prior != command["args"]:
+            return None
+    return fresh
+
+
+def _quantity(value: object) -> int:
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise StageRejection("quantity must be a positive integer")
+    return value
 
 
 def _commit_many(commands: list[dict]) -> dict | None:

@@ -11,6 +11,8 @@ from chain_stage import (
     draft_order_commands,
     opencart_catalog_commands,
     opencart_fulfillment_commands,
+    opencart_settlement_commands,
+    record_opencart_fulfillments,
     record_draft_order,
     record_shopify_fulfillments,
     record_shopify_settlement,
@@ -349,6 +351,40 @@ class SettlementRouteTests(unittest.TestCase):
         )
         self.assertEqual(fulfilled[0]["command"], "fulfill")
         self.assertEqual(fulfilled[0]["args"]["fulfillment_id"], "4:0:sku-serum-c")
+        self.assertEqual(
+            opencart_settlement_commands(
+                {
+                    "order_id": 4,
+                    "status": "shipped",
+                    "currency_code": "ZAR",
+                    "products": [
+                        {"model": "sku-serum-c", "location": "cape-town", "milligrams": 2000, "price": "185.00"}
+                    ],
+                }
+            ),
+            [],
+        )
+        paid = opencart_settlement_commands(
+            {
+                "order_id": 4,
+                "status": "paid",
+                "currency_code": "ZAR",
+                "products": [
+                    {
+                        "model": "sku-serum-c",
+                        "location": "cape-town",
+                        "milligrams": 2000,
+                        "price": "185.00",
+                        "quantity": "1",
+                    }
+                ],
+            }
+        )
+        self.assertEqual(paid[0]["command"], "settle")
+        self.assertEqual(paid[0]["args"]["settlement_id"], "pay-4:0:sku-serum-c")
+        self.assertEqual(paid[0]["args"]["fulfillment_id"], "4:0:sku-serum-c")
+        self.assertEqual(paid[0]["args"]["amount_cents"], 18500)
+        self.assertEqual(paid[0]["args"]["currency"], "ZAR")
         deliveries = wix_delivery_commands(
             {
                 "id": "book-1",
@@ -399,6 +435,141 @@ class SettlementRouteTests(unittest.TestCase):
                     os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
         self.assertFalse(result["ok"])
         self.assertFalse(ledger.exists())
+
+    def test_a_paid_opencart_order_settles_a_shipped_sale_once(self) -> None:
+        product = {
+            "model": "sku-serum-c",
+            "location": "cape-town",
+            "milligrams": 2000,
+            "price": "185.00",
+            "quantity": "1",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                missing = record_opencart_fulfillments(
+                    {"order_id": 4, "status": "complete", "currency_code": "ZAR", "products": [product]}
+                )
+                self.assertFalse(missing["ok"])
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "cleanser",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                shipped = record_opencart_fulfillments(
+                    {"order_id": 4, "status": "shipped", "currency_code": "ZAR", "products": [product]}
+                )
+                self.assertTrue(shipped["ok"])
+                self.assertEqual(shipped["count"], 1)
+                shipped_text = ledger.read_text(encoding="utf-8")
+                self.assertIn("4:0:sku-serum-c", shipped_text)
+                self.assertNotIn("pay-4:0:sku-serum-c", shipped_text)
+                paid = record_opencart_fulfillments(
+                    {"order_id": 4, "status": "paid", "currency_code": "ZAR", "products": [product]}
+                )
+                self.assertTrue(paid["ok"])
+                self.assertEqual(paid["count"], 1)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn("pay-4:0:sku-serum-c", text)
+                again = record_opencart_fulfillments(
+                    {"order_id": 4, "status": "completed", "currency_code": "ZAR", "products": [product]}
+                )
+                self.assertTrue(again["ok"])
+                self.assertEqual(again["count"], 0)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                changed = record_opencart_fulfillments(
+                    {
+                        "order_id": 4,
+                        "status": "paid",
+                        "currency_code": "ZAR",
+                        "products": [{**product, "price": "90.00"}],
+                    }
+                )
+                self.assertFalse(changed["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
     def test_rejects_a_bad_currency(self) -> None:
         body, status = respond(
