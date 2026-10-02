@@ -25,14 +25,59 @@ def settle(args: dict) -> dict:
     }
 
 
+def _settled_fulfillment(settlement_id: str) -> str:
+    """The sale recorded for this settlement. Two different sales are not one return."""
+    if not settlement_id:
+        return ""
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw or not Path(raw).is_file():
+        return ""
+    found = ""
+    for line in Path(raw).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "settle":
+            continue
+        args = record.get("args") or {}
+        if args.get("settlement_id") != settlement_id:
+            continue
+        fulfillment_id = args.get("fulfillment_id")
+        if not isinstance(fulfillment_id, str) or not fulfillment_id:
+            continue
+        if found and found != fulfillment_id:
+            return ""
+        found = fulfillment_id
+    return found
+
+
 def return_for_refund(data: dict) -> tuple[dict, int] | None:
-    """Return a sale when a refund names the fulfillment it closes."""
+    """Return a sale when a refund names the fulfillment it closes.
+
+    A refund that names a settlement, or only the payment intent, returns the sale
+    that settlement recorded. A named fulfillment still wins. A settlement that is
+    not on the ledger stays off and does not fall through to the payment intent.
+    """
     if not isinstance(data, dict):
         return None
     fulfillment_id = _named(data, "fulfillment_id", "fulfillmentId")
+    settlement_id = _named(data, "settlement_id", "settlementId")
+    if not fulfillment_id and settlement_id:
+        fulfillment_id = _settled_fulfillment(settlement_id)
+        if not fulfillment_id:
+            return None
+    if not fulfillment_id:
+        processor_id = _named(data, "payment_intent_id", "paymentIntentId") or _named(
+            data, "processor_payment_id", "processorPaymentId"
+        )
+        if processor_id:
+            fulfillment_id = _settled_fulfillment(f"pay-{processor_id}")
     if not fulfillment_id:
         return None
-    return_id = _named(data, "return_id", "returnId") or f"return:{fulfillment_id}"
+    return_key = _named(data, "return_key", "returnKey")
+    return_id = _named(data, "return_id", "returnId") or (
+        f"return:{return_key}:{fulfillment_id}" if return_key else f"return:{fulfillment_id}"
+    )
     try:
         artifact = {
             "return_id": _text(return_id, "return_id"),

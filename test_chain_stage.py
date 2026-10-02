@@ -3582,6 +3582,8 @@ class SettlementRouteTests(unittest.TestCase):
 
     def test_a_pos_refund_returns_the_named_sale_once(self) -> None:
         self.assertIsNone(return_for_refund({"amount": 10}))
+        self.assertIsNone(return_for_refund({"settlement_id": "pay-snake"}))
+        self.assertIsNone(return_for_refund({"payment_intent_id": "pi_pos"}))
         previous = os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
         try:
             body, status = return_for_refund(
@@ -3681,6 +3683,44 @@ class SettlementRouteTests(unittest.TestCase):
                                         "kind": "retail",
                                     },
                                 },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "order-named",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "settle",
+                                    "args": {
+                                        "settlement_id": "pay-snake",
+                                        "fulfillment_id": "order-named",
+                                        "amount_cents": 2000,
+                                        "currency": "USD",
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "order-intent",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 1000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "settle",
+                                    "args": {
+                                        "settlement_id": "pay-pi_pos",
+                                        "fulfillment_id": "order-intent",
+                                        "amount_cents": 1000,
+                                        "currency": "USD",
+                                    },
+                                },
                             ]
                         }
                     ),
@@ -3701,6 +3741,44 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertEqual(again_status, 400)
                 self.assertFalse(again_body["ok"])
                 self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                missed_body, missed_status = return_for_refund(
+                    {
+                        "fulfillment_id": "missing-order",
+                        "settlement_id": "pay-snake",
+                        "payment_intent_id": "pi_pos",
+                    }
+                )
+                self.assertEqual(missed_status, 400)
+                self.assertFalse(missed_body["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                self.assertIsNone(
+                    return_for_refund({"settlement_id": "pay-absent", "payment_intent_id": "pi_pos"})
+                )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                named_body, named_status = return_for_refund(
+                    {"settlement_id": "pay-snake", "return_key": "tx-named", "payment_intent_id": "pi_pos"}
+                )
+                self.assertEqual(named_status, 200)
+                named_text = ledger.read_text(encoding="utf-8")
+                self.assertIn("return:tx-named:order-named", named_text)
+                self.assertNotIn("return:to-cape-town", named_text)
+                named_again, named_again_status = return_for_refund(
+                    {"settlement_id": "pay-snake", "return_key": "tx-named"}
+                )
+                self.assertEqual(named_again_status, 400)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), named_text)
+                intent_body, intent_status = return_for_refund(
+                    {"payment_intent_id": "pi_pos", "return_key": "tx-intent"}
+                )
+                self.assertEqual(intent_status, 200)
+                intent_text = ledger.read_text(encoding="utf-8")
+                self.assertIn("return:tx-intent:order-intent", intent_text)
+                self.assertNotIn("return:to-cape-town", intent_text)
+                intent_again, intent_again_status = return_for_refund(
+                    {"payment_intent_id": "pi_pos", "return_key": "tx-intent"}
+                )
+                self.assertEqual(intent_again_status, 400)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), intent_text)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)

@@ -70,7 +70,13 @@ def _settle_paystack(transaction):
     return record_paystack_settlement(transaction)
 
 
-def _return_chain_sale(fulfillment_id, transaction_id, return_id=None):
+def _return_chain_sale(
+    fulfillment_id,
+    transaction_id,
+    return_id=None,
+    settlement_id=None,
+    payment_intent_id=None,
+):
     """Return the sale before the processor refunds the payment."""
     import sys
     from pathlib import Path
@@ -80,16 +86,24 @@ def _return_chain_sale(fulfillment_id, transaction_id, return_id=None):
         sys.path.insert(0, str(root))
     from chain_stage import return_for_refund, use_shared_ledger
 
-    if not isinstance(fulfillment_id, str) or not fulfillment_id.strip():
+    payload = {}
+    if isinstance(fulfillment_id, str) and fulfillment_id.strip():
+        payload["fulfillment_id"] = fulfillment_id.strip()
+    if isinstance(settlement_id, str) and settlement_id.strip():
+        payload["settlement_id"] = settlement_id.strip()
+    if isinstance(payment_intent_id, str) and payment_intent_id.strip():
+        payload["payment_intent_id"] = payment_intent_id.strip()
+    if not payload:
         return None
     named_return = return_id.strip() if isinstance(return_id, str) and return_id.strip() else ""
+    if named_return:
+        payload["return_id"] = named_return
+    elif payload.get("fulfillment_id"):
+        payload["return_id"] = f"return:{transaction_id}:{payload['fulfillment_id']}"
+    else:
+        payload["return_key"] = str(transaction_id)
     use_shared_ledger()
-    return return_for_refund(
-        {
-            "fulfillment_id": fulfillment_id.strip(),
-            "return_id": named_return or f"return:{transaction_id}:{fulfillment_id.strip()}",
-        }
-    )
+    return return_for_refund(payload)
 
 # Initialize Stripe with the API key from ConfigManager or fallback to environment variable
 stripe_secret_key = ConfigManager.get_stripe_secret_key() or os.environ.get('STRIPE_SECRET_KEY')
@@ -829,6 +843,8 @@ def refund_transaction(id):
             fulfillment_id,
             id,
             _named_text(refund_body, "return_id", "returnId"),
+            _named_text(refund_body, "settlement_id", "settlementId"),
+            payment_intent_id if isinstance(payment_intent_id, str) else "",
         )
         if returned is not None:
             body, status = returned
