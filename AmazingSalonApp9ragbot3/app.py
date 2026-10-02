@@ -116,8 +116,12 @@ def supply_chain_command():
     root = Path(__file__).resolve().parents[1]
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
-    from chain_stage import respond
+    from chain_stage import _hub_root, respond
 
+    hub = _hub_root()
+    if hub is not None:
+        os.environ.setdefault("SKINTWIN_HUB_ROOT", str(hub))
+        os.environ.setdefault("SKINTWIN_CHAIN_LEDGER", str(hub / "var" / "supply-chain.jsonl"))
     body, status = respond(request.get_json(silent=True) or {})
     return jsonify(body), status
 
