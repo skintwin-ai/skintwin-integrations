@@ -29,6 +29,7 @@ from chain_stage import (
     shopify_catalog_commands,
     shopify_fulfillment_commands,
     record_shopify_order_update,
+    record_synced_sale,
     shopify_order_update_commands,
     shopify_return_commands,
     shopify_settlement_commands,
@@ -4956,6 +4957,228 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertEqual(again_status, 400)
                 self.assertFalse(again["ok"])
                 self.assertEqual(ledger.read_text(encoding="utf-8"), recorded)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
+    def test_a_platform_sync_records_the_named_sale_once(self) -> None:
+        self.assertIsNone(record_synced_sale("shopify", "nope"))
+        self.assertIsNone(record_synced_sale("other", {"order_number": 9}))
+        sale = {
+            "order_number": 9,
+            "fulfillment_status": "fulfilled",
+            "line_items": [
+                {"sku": "sku-serum-c", "location": "cape-town", "milligrams": 2000}
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+
+            class _Sync:
+                def __init__(self, rows):
+                    self.rows = rows
+                    self.mapped = []
+
+                def sync_appointments(self, since=None):
+                    return self.rows
+
+                def map_order_to_unified(self, raw):
+                    self.mapped.append(raw["order_number"])
+                    return {"order_number": raw["order_number"]}
+
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationGateway = importlib.import_module("integrations.gateway").IntegrationGateway
+                self.assertIsNone(
+                    record_synced_sale(
+                        "shopify",
+                        {"order_number": 9, "line_items": [{"sku": "sku-serum-c"}]},
+                    )
+                )
+                self.assertIsNone(record_synced_sale("wix", {"id": "book-1"}))
+                self.assertIsNone(
+                    record_synced_sale(
+                        "opencart",
+                        {"order_id": 9, "products": [{"sku": "sku-serum-c"}]},
+                    )
+                )
+                rejected = record_synced_sale(
+                    "shopify",
+                    {
+                        "order_number": 9,
+                        "fulfillment_status": "fulfilled",
+                        "line_items": [
+                            {
+                                "sku": "sku-serum-c",
+                                "location": "cape-town",
+                                "milligrams": "lots",
+                            }
+                        ],
+                    },
+                )
+                self.assertFalse(rejected["ok"])
+                self.assertFalse(ledger.exists())
+                gateway = IntegrationGateway()
+                skipped = _Sync(
+                    [
+                        {"order_number": 8, "line_items": [{"sku": "sku-serum-c"}]},
+                        {
+                            "order_number": 9,
+                            "fulfillment_status": "fulfilled",
+                            "line_items": [
+                                {
+                                    "sku": "sku-serum-c",
+                                    "location": "cape-town",
+                                    "milligrams": "lots",
+                                }
+                            ],
+                        },
+                    ]
+                )
+                gateway.register_connector("shopify", skipped)
+                synced = gateway.sync_appointments(["shopify"])
+                self.assertEqual(skipped.mapped, [8])
+                self.assertEqual(len(synced["shopify"]), 1)
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {
+                                        "ingredient_id": "glycerin",
+                                        "inci": "Glycerin",
+                                        "cas": "56-81-5",
+                                    },
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                recorded = record_synced_sale("shopify", sale)
+                self.assertTrue(recorded["ok"])
+                self.assertEqual(recorded["count"], 1)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "9:0:sku-serum-c"', text)
+                self.assertIn('"location": "cape-town"', text)
+                self.assertIn('"milligrams": 2000', text)
+                again = record_synced_sale("shopify", sale)
+                self.assertTrue(again["ok"])
+                self.assertEqual(again["count"], 0)
+                changed = record_synced_sale(
+                    "shopify",
+                    {
+                        "order_number": 9,
+                        "fulfillment_status": "fulfilled",
+                        "line_items": [
+                            {
+                                "sku": "sku-serum-c",
+                                "location": "johannesburg",
+                                "milligrams": 2000,
+                            }
+                        ],
+                    },
+                )
+                self.assertFalse(changed["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                repeat = _Sync([sale])
+                gateway.register_connector("shopify", repeat)
+                repeated = gateway.sync_appointments(["shopify"])
+                self.assertEqual(repeat.mapped, [9])
+                self.assertEqual(len(repeated["shopify"]), 1)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)

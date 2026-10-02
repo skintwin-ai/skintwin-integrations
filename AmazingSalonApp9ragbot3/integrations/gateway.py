@@ -25,6 +25,19 @@ from .shopify import ShopifyB2BConnector
 logger = logging.getLogger(__name__)
 
 
+def _record_platform_sale(platform: str, payload):
+    """Record a synced payload with the same command a webhook would use."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import chain_stage
+
+    return chain_stage.record_synced_sale(platform, payload)
+
+
 class IntegrationGateway:
     """
     Unified API Gateway for managing all platform integrations.
@@ -190,9 +203,17 @@ class IntegrationGateway:
             try:
                 raw_appointments = connector.sync_appointments(since)
                 
-                # Map to unified model
+                # Map to unified model. A rejected named sale does not drop the rest.
                 unified = []
                 for raw in raw_appointments:
+                    recorded = _record_platform_sale(platform, raw)
+                    if isinstance(recorded, dict) and recorded.get("ok") is False:
+                        logger.error(
+                            "Supply chain rejected a synced %s sale: %s",
+                            platform,
+                            recorded.get("error") or "rejected",
+                        )
+                        continue
                     if platform == 'wix':
                         unified.append(connector.map_booking_to_unified(raw))
                     elif platform == 'shopify':

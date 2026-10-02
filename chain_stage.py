@@ -849,6 +849,23 @@ def record_shopify_order_update(order: dict) -> dict | None:
     return _commit_idempotent(commands)
 
 
+def record_synced_sale(platform: str, payload: dict) -> dict | None:
+    """A platform sync records the same sale the webhook would record.
+
+    An order that does not name a shipped sale, delivery, or return stays off the ledger.
+    """
+    if not isinstance(payload, dict):
+        return None
+    name = str(platform or "").strip().lower()
+    if name == "shopify":
+        return record_shopify_order_update(payload)
+    if name == "opencart":
+        return record_opencart_fulfillments(payload)
+    if name == "wix":
+        return record_wix_deliveries(payload)
+    return None
+
+
 _LINE_ATTRIBUTES = {
     "location": "location",
     "milligrams": "milligrams",
