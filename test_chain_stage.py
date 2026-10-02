@@ -3524,6 +3524,229 @@ class SettlementRouteTests(unittest.TestCase):
             else:
                 os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
 
+    def test_an_incoming_webhook_records_the_named_sale_once(self) -> None:
+        delivery = {
+            "sku_id": "sku-serum-c",
+            "batch_id": "batch-1",
+            "source": "plant",
+            "destination": "cape-town",
+            "milligrams": 2000,
+        }
+        product = {
+            "model": "sku-serum-c",
+            "location": "cape-town",
+            "milligrams": 2000,
+            "price": "185.00",
+            "quantity": "1",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                wix = self._webhook_module("wix")
+                opencart = self._webhook_module("opencart")
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 8000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "cleanser",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 4000,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                seeded_text = ledger.read_text(encoding="utf-8")
+                plain = wix.WixWebhookHandler("secret").process_webhook(
+                    json.dumps(
+                        {
+                            "eventType": "booking/created",
+                            "data": {"id": "book-plain", "services": [{"name": "Facial"}]},
+                        }
+                    ).encode()
+                )
+                self.assertEqual(plain["status"], "processed")
+                self.assertIsNone(plain["result"]["recorded"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), seeded_text)
+                with self.assertRaises(wix.WebhookError):
+                    wix.WixWebhookHandler("secret").process_webhook(
+                        json.dumps(
+                            {
+                                "eventType": "booking/created",
+                                "data": {
+                                    "id": "book-hook",
+                                    "services": [{"delivery": {**delivery, "milligrams": "lots"}}],
+                                },
+                            }
+                        ).encode()
+                    )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), seeded_text)
+                created = wix.WixWebhookHandler("secret").process_webhook(
+                    json.dumps(
+                        {
+                            "eventType": "booking/created",
+                            "data": {"id": "book-hook", "services": [{"delivery": delivery}]},
+                        }
+                    ).encode()
+                )
+                self.assertEqual(created["result"]["recorded"]["count"], 1)
+                self.assertIn("book-hook:0", ledger.read_text(encoding="utf-8"))
+                again = wix.WixWebhookHandler("secret").process_webhook(
+                    json.dumps(
+                        {
+                            "eventType": "booking/created",
+                            "data": {"id": "book-hook", "services": [{"delivery": delivery}]},
+                        }
+                    ).encode()
+                )
+                self.assertEqual(again["result"]["recorded"]["count"], 0)
+                booked = ledger.read_text(encoding="utf-8")
+                with self.assertRaises(wix.WebhookError):
+                    wix.WixWebhookHandler("secret").process_webhook(
+                        json.dumps(
+                            {
+                                "eventType": "booking/updated",
+                                "data": {
+                                    "id": "book-hook",
+                                    "services": [{"delivery": {**delivery, "destination": "johannesburg"}}],
+                                },
+                            }
+                        ).encode()
+                    )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), booked)
+                catalog = opencart.OpenCartWebhookHandler("secret").process_webhook(
+                    json.dumps(
+                        {
+                            "event": "product/created",
+                            "data": {"name": "Cleanser", "sku": "sku-plain"},
+                        }
+                    ).encode()
+                )
+                self.assertIsNone(catalog["result"]["recorded"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), booked)
+                pending = opencart.OpenCartWebhookHandler("secret").process_webhook(
+                    json.dumps({"order_id": 21, "status": "pending", "products": [product]}).encode(),
+                    event_type="order/created",
+                )
+                self.assertIsNone(pending["result"]["recorded"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), booked)
+                with self.assertRaises(opencart.WebhookError):
+                    opencart.OpenCartWebhookHandler("secret").process_webhook(
+                        json.dumps(
+                            {
+                                "order_id": 21,
+                                "status": "shipped",
+                                "products": [{**product, "milligrams": "lots"}],
+                            }
+                        ).encode(),
+                        event_type="order/created",
+                    )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), booked)
+                shipped = opencart.OpenCartWebhookHandler("secret").process_webhook(
+                    json.dumps(
+                        {"order_id": 21, "status": "shipped", "products": [product]}
+                    ).encode(),
+                    event_type="order/created",
+                )
+                self.assertEqual(shipped["result"]["recorded"]["count"], 1)
+                self.assertIn("21:0:sku-serum-c", ledger.read_text(encoding="utf-8"))
+                repeated = opencart.OpenCartWebhookHandler("secret").process_webhook(
+                    json.dumps(
+                        {"order_id": 21, "status": "shipped", "products": [product]}
+                    ).encode(),
+                    event_type="order/created",
+                )
+                self.assertEqual(repeated["result"]["recorded"]["count"], 0)
+                sold = ledger.read_text(encoding="utf-8")
+                with self.assertRaises(opencart.WebhookError):
+                    opencart.OpenCartWebhookHandler("secret").process_webhook(
+                        json.dumps(
+                            {
+                                "order_id": 21,
+                                "status": "shipped",
+                                "products": [{**product, "location": "johannesburg"}],
+                            }
+                        ).encode(),
+                        event_type="order/created",
+                    )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), sold)
+                self.assertIn('"location": "cape-town"', sold)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
     def test_a_blank_order_number_records_the_named_order_once(self) -> None:
         line = {"sku": "sku-serum-c", "location": "cape-town", "milligrams": 2000}
         preferred = shopify_fulfillment_commands(

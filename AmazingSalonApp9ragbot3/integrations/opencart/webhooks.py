@@ -89,7 +89,8 @@ class OpenCartWebhookHandler:
     def process_webhook(
         self,
         payload: bytes,
-        signature: Optional[str] = None
+        signature: Optional[str] = None,
+        event_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Process an incoming webhook.
@@ -110,31 +111,44 @@ class OpenCartWebhookHandler:
         except json.JSONDecodeError as e:
             raise WebhookError(f"Invalid JSON payload: {e}", event_type="unknown")
         
-        event_type = data.get('event', data.get('type', 'unknown'))
+        named = data.get('event', data.get('type'))
+        if named is None or str(named).strip() in ("", "unknown"):
+            named = event_type
+        event_name = str(named or "unknown").strip() or "unknown"
         event_data = data.get('data', data)
         
-        logger.info(f"Processing OpenCart webhook: {event_type}")
+        logger.info(f"Processing OpenCart webhook: {event_name}")
         
         # Call registered handler
-        handler = self._handlers.get(event_type)
+        handler = self._handlers.get(event_name)
         if handler:
             try:
                 result = handler(event_data)
                 return {
                     'status': 'processed',
-                    'event_type': event_type,
+                    'event_type': event_name,
                     'result': result
                 }
             except Exception as e:
-                logger.error(f"Error processing webhook {event_type}: {e}")
-                raise WebhookError(f"Handler error: {e}", event_type=event_type)
-        else:
-            logger.warning(f"No handler registered for event: {event_type}")
+                logger.error(f"Error processing webhook {event_name}: {e}")
+                raise WebhookError(f"Handler error: {e}", event_type=event_name)
+
+        # Default handlers already record a product or order that names a formula or sale.
+        default_handler = getattr(self, self.EVENT_TYPES.get(event_name, ''), None)
+        if default_handler:
+            result = default_handler(event_data)
             return {
-                'status': 'ignored',
-                'event_type': event_type,
-                'message': 'No handler registered'
+                'status': 'processed',
+                'event_type': event_name,
+                'result': result
             }
+
+        logger.warning(f"No handler registered for event: {event_name}")
+        return {
+            'status': 'ignored',
+            'event_type': event_name,
+            'message': 'No handler registered'
+        }
     
     # Default event handlers
     

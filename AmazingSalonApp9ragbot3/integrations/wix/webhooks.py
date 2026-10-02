@@ -132,13 +132,23 @@ class WixWebhookHandler:
             except Exception as e:
                 logger.error(f"Error processing webhook {event_type}: {e}")
                 raise WebhookError(f"Handler error: {e}", event_type=event_type)
-        else:
-            logger.warning(f"No handler registered for event: {event_type}")
+
+        # Default handlers already record a booking that names a delivery.
+        default_handler = getattr(self, self.EVENT_TYPES.get(event_type, ''), None)
+        if default_handler:
+            result = default_handler(event_data)
             return {
-                'status': 'ignored',
+                'status': 'processed',
                 'event_type': event_type,
-                'message': 'No handler registered'
+                'result': result
             }
+
+        logger.warning(f"No handler registered for event: {event_type}")
+        return {
+            'status': 'ignored',
+            'event_type': event_type,
+            'message': 'No handler registered'
+        }
     
     # Default event handlers (can be overridden)
     
