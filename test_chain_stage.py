@@ -966,6 +966,158 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_an_opencart_status_id_records_the_named_sale(self) -> None:
+        product = {
+            "model": "sku-serum-c",
+            "location": "cape-town",
+            "milligrams": 2000,
+            "price": "185.00",
+            "quantity": "1",
+        }
+        named = {"order_id": 4, "status": "complete", "currency_code": "ZAR", "products": [product]}
+        by_id = {"order_id": 4, "order_status_id": 5, "currency_code": "ZAR", "products": [product]}
+        self.assertEqual(opencart_fulfillment_commands(by_id), opencart_fulfillment_commands(named))
+        self.assertEqual(opencart_settlement_commands(by_id), opencart_settlement_commands(named))
+        shipped = {"order_id": 4, "new_status_id": "3", "currency_code": "ZAR", "products": [product]}
+        self.assertEqual(
+            opencart_fulfillment_commands(shipped),
+            opencart_fulfillment_commands({**named, "status": "shipped"}),
+        )
+        self.assertEqual(opencart_settlement_commands(shipped), [])
+        self.assertEqual(opencart_return_commands(shipped), [])
+        returned = {"order_id": 4, "new_status_id": 11, "products": [product]}
+        self.assertEqual(
+            opencart_return_commands(returned),
+            opencart_return_commands({**named, "status": "refunded"}),
+        )
+        self.assertEqual(
+            opencart_fulfillment_commands({"order_id": 4, "new_status_id": 1, "products": [product]}),
+            [],
+        )
+        self.assertEqual(
+            opencart_fulfillment_commands(
+                {"order_id": 4, "status": "pending", "order_status_id": 5, "products": [product]}
+            ),
+            [],
+        )
+        self.assertEqual(
+            opencart_fulfillment_commands({"order_id": 4, "order_status_id": 15, "products": [product]}),
+            [],
+        )
+        self.assertEqual(
+            opencart_fulfillment_commands(
+                {"order_id": 4, "order_status_id": 5, "products": [{"model": "sku-serum-c", "price": "185.00"}]}
+            ),
+            [],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                pending = record_opencart_fulfillments(
+                    {"order_id": 4, "new_status_id": 2, "products": [product]}
+                )
+                self.assertIsNone(pending)
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "cleanser",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                recorded = record_opencart_fulfillments(by_id)
+                self.assertTrue(recorded["ok"])
+                self.assertEqual(recorded["count"], 2)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn("4:0:sku-serum-c", text)
+                self.assertIn("pay-4:0:sku-serum-c", text)
+                again = record_opencart_fulfillments(
+                    {"order_id": 4, "new_status_id": 5, "currency_code": "ZAR", "products": [product]}
+                )
+                self.assertTrue(again["ok"])
+                self.assertEqual(again["count"], 0)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
     def test_a_cancelled_storefront_sale_returns_stock_once(self) -> None:
         line = {
             "sku": "sku-serum-c",

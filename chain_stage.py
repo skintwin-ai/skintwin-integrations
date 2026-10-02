@@ -547,8 +547,38 @@ def opencart_return_commands(order: dict) -> list[dict]:
     return _sale_returns(opencart_fulfillment_commands(named))
 
 
+# OpenCart connector payment map, labeled with the status names that map already uses.
+_OPENCART_STATUS_IDS = {
+    1: "pending",
+    2: "pending",
+    3: "shipped",
+    5: "complete",
+    7: "canceled",
+    11: "refunded",
+}
+
+
 def _opencart_status(order: dict) -> str:
-    return str(order.get("status") or order.get("new_status") or order.get("order_status") or "").strip().lower()
+    named = str(order.get("status") or order.get("new_status") or order.get("order_status") or "").strip().lower()
+    if named:
+        return named
+    for key in ("new_status_id", "order_status_id"):
+        if order.get(key) is None:
+            continue
+        label = _OPENCART_STATUS_IDS.get(_opencart_status_code(order.get(key)))
+        if label:
+            return label
+    return ""
+
+
+def _opencart_status_code(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
 
 
 def _opencart_returned(order: dict) -> bool:
