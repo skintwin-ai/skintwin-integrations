@@ -26,6 +26,53 @@ from ..common.models import (
 logger = logging.getLogger(__name__)
 
 
+def _chain_stage():
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import chain_stage
+
+    return chain_stage
+
+
+def _reject_ledger(recorded, label: str):
+    if isinstance(recorded, dict) and recorded.get("ok") is False:
+        raise IntegrationError(recorded.get("error") or f"supply chain rejected the {label}")
+
+
+def _wix_services(appointment_data):
+    if not isinstance(appointment_data, dict):
+        return []
+    services = appointment_data.get("services") or []
+    if isinstance(services, dict):
+        return [services]
+    if isinstance(services, list):
+        return services
+    return []
+
+
+def _names_wix_delivery(appointment_data) -> bool:
+    return any(
+        isinstance(service, dict) and isinstance(service.get("delivery"), dict)
+        for service in _wix_services(appointment_data)
+    )
+
+
+def _record_named_wix_delivery(appointment_data, booking_id=None):
+    """A booking that already names a delivery records the same transfer a webhook would."""
+    if not _names_wix_delivery(appointment_data):
+        return None
+    booking = appointment_data
+    if booking_id and not str(appointment_data.get("id") or "").strip():
+        booking = {**appointment_data, "id": booking_id}
+    recorded = _chain_stage().record_wix_deliveries(booking)
+    _reject_ledger(recorded, "booking")
+    return recorded
+
+
 class WixBookingsConnector(BaseConnector):
     """
     Connector for Wix Bookings API.
@@ -332,6 +379,7 @@ class WixBookingsConnector(BaseConnector):
         Returns:
             Dict: Created booking data
         """
+        _record_named_wix_delivery(appointment_data)
         try:
             # Map unified appointment to Wix booking format
             wix_booking = self._map_to_wix_booking(appointment_data)
@@ -366,6 +414,7 @@ class WixBookingsConnector(BaseConnector):
         Returns:
             Dict: Updated booking data
         """
+        _record_named_wix_delivery(appointment_data, appointment_id)
         try:
             # Get current booking for revision
             current = self.get_booking(appointment_id)
