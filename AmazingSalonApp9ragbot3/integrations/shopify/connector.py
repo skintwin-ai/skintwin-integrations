@@ -28,8 +28,7 @@ from ..common.models import (
 logger = logging.getLogger(__name__)
 
 
-def _record_shopify_catalog(product):
-    """A created or updated product records the same catalog a webhook would record."""
+def _chain_stage():
     import sys
     from pathlib import Path
 
@@ -38,9 +37,25 @@ def _record_shopify_catalog(product):
         sys.path.insert(0, str(root))
     import chain_stage
 
-    recorded = chain_stage.record_shopify_catalog(product)
+    return chain_stage
+
+
+def _reject_ledger(recorded, label: str):
     if isinstance(recorded, dict) and recorded.get("ok") is False:
-        raise IntegrationError(recorded.get("error") or "supply chain rejected the product")
+        raise IntegrationError(recorded.get("error") or f"supply chain rejected the {label}")
+
+
+def _record_shopify_catalog(product):
+    """A created or updated product records the same catalog a webhook would record."""
+    recorded = _chain_stage().record_shopify_catalog(product)
+    _reject_ledger(recorded, "product")
+    return recorded
+
+
+def _record_shopify_order(order):
+    """A created or updated order records the same sale a webhook would record."""
+    recorded = _chain_stage().record_shopify_order_update(order)
+    _reject_ledger(recorded, "order")
     return recorded
 
 
@@ -327,6 +342,7 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Created order data
         """
+        _record_shopify_order(order_data)
         response = self.post(self.ENDPOINTS['orders'], {'order': order_data})
         return response.get('order', response)
     
@@ -341,6 +357,7 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Updated order data
         """
+        _record_shopify_order(order_data)
         endpoint = self.ENDPOINTS['order'].format(id=order_id)
         response = self.put(endpoint, {'order': order_data})
         return response.get('order', response)
