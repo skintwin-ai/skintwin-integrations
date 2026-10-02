@@ -427,9 +427,39 @@ def shopify_fulfillment_commands(order: dict) -> list[dict]:
     return commands
 
 
+def _recorded_sale_returns(order_id: str) -> list[dict]:
+    """Sales already drawn for this order, when the cancel payload omits the lines."""
+    if not order_id:
+        return []
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw or not Path(raw).is_file():
+        return []
+    prefix = f"{order_id}:"
+    found: dict[str, None] = {}
+    for line in Path(raw).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "fulfill":
+            continue
+        fulfillment_id = (record.get("args") or {}).get("fulfillment_id")
+        if not isinstance(fulfillment_id, str) or not fulfillment_id.startswith(prefix):
+            continue
+        index, sep, _sku = fulfillment_id[len(prefix) :].partition(":")
+        if not index.isdigit() or not sep:
+            continue
+        found[fulfillment_id] = None
+    return _sale_returns(
+        [{"command": "fulfill", "args": {"fulfillment_id": fulfillment_id}} for fulfillment_id in found]
+    )
+
+
 def shopify_return_commands(order: dict) -> list[dict]:
     """A cancelled order returns the sale its lines would draw."""
-    return _sale_returns(shopify_fulfillment_commands(order))
+    commands = _sale_returns(shopify_fulfillment_commands(order))
+    if commands:
+        return commands
+    return _recorded_sale_returns(_order_label(order, "order_number", "name", "id"))
 
 
 _SHOPIFY_RETURNED = frozenset({"refunded", "voided"})
@@ -696,7 +726,10 @@ def opencart_return_commands(order: dict) -> list[dict]:
         if key not in {"status", "new_status", "order_status", "returned", "fulfilled", "paid"}
     }
     named["status"] = "shipped"
-    return _sale_returns(opencart_fulfillment_commands(named))
+    commands = _sale_returns(opencart_fulfillment_commands(named))
+    if commands:
+        return commands
+    return _recorded_sale_returns(_order_label(order, "order_id", "order_number", "id"))
 
 
 # OpenCart connector payment map, labeled with the status names that map already uses.

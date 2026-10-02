@@ -2658,6 +2658,149 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_cancelled_order_returns_the_sale_it_already_recorded(self) -> None:
+        thin = {"id": 9, "order_number": 9, "cancelled_at": "2026-10-02T00:00:00Z"}
+        opencart_cancel = {"order_id": 4, "new_status_id": 7}
+        self.assertEqual(shopify_return_commands(thin), [])
+        self.assertEqual(opencart_return_commands(opencart_cancel), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "9:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "4:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                shopify = self._webhook_module("shopify")
+                commands = shopify_return_commands(thin)
+                self.assertEqual(commands[0]["args"]["return_id"], "return:9:0:sku-serum-c")
+                self.assertEqual(commands[0]["args"]["fulfillment_id"], "9:0:sku-serum-c")
+                cancelled = shopify.ShopifyWebhookHandler("secret").on_order_cancelled(thin)
+                self.assertEqual(cancelled["recorded"], {"ok": True, "count": 1})
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"return_id": "return:9:0:sku-serum-c"', text)
+                self.assertNotIn('"return_id": "return:to-cape-town"', text)
+                again = shopify.ShopifyWebhookHandler("secret").on_order_cancelled(thin)
+                self.assertEqual(again["recorded"], {"ok": True, "count": 0})
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                absent = shopify.ShopifyWebhookHandler("secret").on_order_cancelled(
+                    {"id": 19, "order_number": 19, "cancelled_at": "2026-10-02T00:00:00Z"}
+                )
+                self.assertIsNone(absent["recorded"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                opencart = self._webhook_module("opencart")
+                returned = opencart_return_commands(opencart_cancel)
+                self.assertEqual(returned[0]["args"]["fulfillment_id"], "4:0:sku-serum-c")
+                changed = opencart.OpenCartWebhookHandler("secret").on_order_status_changed(opencart_cancel)
+                self.assertEqual(changed["recorded"], {"ok": True, "count": 1})
+                recorded = ledger.read_text(encoding="utf-8")
+                self.assertIn('"return_id": "return:4:0:sku-serum-c"', recorded)
+                repeated = opencart.OpenCartWebhookHandler("secret").on_order_status_changed(opencart_cancel)
+                self.assertEqual(repeated["recorded"], {"ok": True, "count": 0})
+                self.assertEqual(ledger.read_text(encoding="utf-8"), recorded)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
     def test_a_paid_opencart_order_settles_a_shipped_sale_once(self) -> None:
         product = {
             "model": "sku-serum-c",
