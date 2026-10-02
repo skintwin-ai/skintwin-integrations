@@ -5775,15 +5775,61 @@ class SettlementRouteTests(unittest.TestCase):
                             "order": "orders/{id}.json",
                         }
 
+                    def _saved(self, data):
+                        order = data["order"]
+                        number = order.get("order_number")
+                        echoes = {
+                            11: {
+                                "order_number": 11,
+                                "fulfillment_status": "fulfilled",
+                                "line_items": [
+                                    {
+                                        "sku": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                    }
+                                ],
+                            },
+                            12: {
+                                "order_number": 12,
+                                "fulfillment_status": "fulfilled",
+                                "line_items": [
+                                    {
+                                        "sku": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": "lots",
+                                    }
+                                ],
+                            },
+                            13: {
+                                "order_number": 13,
+                                "line_items": [{"sku": "sku-serum-c"}],
+                            },
+                            14: {
+                                "order_number": 11,
+                                "fulfillment_status": "fulfilled",
+                                "line_items": [
+                                    {
+                                        "sku": "sku-serum-c",
+                                        "location": "johannesburg",
+                                        "milligrams": 2000,
+                                    }
+                                ],
+                            },
+                        }
+                        if number in echoes:
+                            return {"order": echoes[number]}
+                        return {"order": order}
+
                     def post(self, endpoint, data):
                         order = data["order"]
                         self.sent.append(("post", order.get("order_number")))
-                        return {"order": order}
+                        return self._saved(data)
 
                     def put(self, endpoint, data):
                         order = data["order"]
                         self.sent.append(("put", order.get("order_number")))
-                        return {"order": order}
+                        return self._saved(data)
 
                 connector = _Orders()
                 opened = connector.create_order(
@@ -5911,6 +5957,32 @@ class SettlementRouteTests(unittest.TestCase):
                     )
                 self.assertEqual(connector.sent, [("post", 8), ("post", 9), ("put", 9)])
                 self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                echo = {"order_number": 11, "line_items": [{"sku": "sku-serum-c"}]}
+                echoed = connector.create_order(echo)
+                self.assertEqual(echoed["fulfillment_status"], "fulfilled")
+                self.assertIn(("post", 11), connector.sent)
+                echoed_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "11:0:sku-serum-c"', echoed_text)
+                self.assertIn('"location": "cape-town"', echoed_text)
+                self.assertNotIn("johannesburg", echoed_text)
+                again = connector.create_order(echo)
+                self.assertEqual(again["fulfillment_status"], "fulfilled")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                before_bad = list(connector.sent)
+                with self.assertRaises(IntegrationError):
+                    connector.update_order(12, {"order_number": 12, "line_items": [{"sku": "sku-serum-c"}]})
+                self.assertEqual(connector.sent, before_bad + [("put", 12)])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn('"fulfillment_id": "12:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
+                opened = connector.update_order(13, {"order_number": 13, "line_items": [{"sku": "sku-serum-c"}]})
+                self.assertIsNone(opened.get("fulfillment_status"))
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn('"fulfillment_id": "13:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
+                with self.assertRaises(IntegrationError):
+                    connector.update_order(11, {"order_number": 14, "line_items": [{"sku": "sku-serum-c"}]})
+                self.assertIn(("put", 14), connector.sent)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
+                self.assertNotIn("johannesburg", ledger.read_text(encoding="utf-8"))
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)

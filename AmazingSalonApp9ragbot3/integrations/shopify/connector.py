@@ -364,7 +364,10 @@ class ShopifyB2BConnector(BaseConnector):
         """
         _record_shopify_order(order_data)
         response = self.post(self.ENDPOINTS['orders'], {'order': order_data})
-        return response.get('order', response)
+        saved = response.get('order', response)
+        if saved is not order_data:
+            _record_shopify_order(saved)
+        return saved
     
     def update_order(self, order_id: int, order_data: Dict) -> Dict[str, Any]:
         """
@@ -380,7 +383,10 @@ class ShopifyB2BConnector(BaseConnector):
         _record_shopify_order(order_data)
         endpoint = self.ENDPOINTS['order'].format(id=order_id)
         response = self.put(endpoint, {'order': order_data})
-        return response.get('order', response)
+        saved = response.get('order', response)
+        if saved is not order_data:
+            _record_shopify_order(saved)
+        return saved
     
     def cancel_order(self, order_id: int, reason: str = "other") -> Dict[str, Any]:
         """
