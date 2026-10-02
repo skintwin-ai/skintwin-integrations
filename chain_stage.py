@@ -866,6 +866,21 @@ def record_synced_sale(platform: str, payload: dict) -> dict | None:
     return None
 
 
+def record_synced_catalog(platform: str, payload: dict) -> dict | None:
+    """A platform product sync records the same catalog the webhook would record.
+
+    A product that does not name a formula stays off the ledger.
+    """
+    if not isinstance(payload, dict):
+        return None
+    name = str(platform or "").strip().lower()
+    if name == "shopify":
+        return record_shopify_catalog(payload)
+    if name == "opencart":
+        return record_opencart_catalog(payload)
+    return None
+
+
 _LINE_ATTRIBUTES = {
     "location": "location",
     "milligrams": "milligrams",

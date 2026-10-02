@@ -25,8 +25,7 @@ from .shopify import ShopifyB2BConnector
 logger = logging.getLogger(__name__)
 
 
-def _record_platform_sale(platform: str, payload):
-    """Record a synced payload with the same command a webhook would use."""
+def _chain_stage():
     import sys
     from pathlib import Path
 
@@ -35,7 +34,17 @@ def _record_platform_sale(platform: str, payload):
         sys.path.insert(0, str(root))
     import chain_stage
 
-    return chain_stage.record_synced_sale(platform, payload)
+    return chain_stage
+
+
+def _record_platform_sale(platform: str, payload):
+    """Record a synced payload with the same command a webhook would use."""
+    return _chain_stage().record_synced_sale(platform, payload)
+
+
+def _record_platform_catalog(platform: str, payload):
+    """Record a synced product with the same catalog command a webhook would use."""
+    return _chain_stage().record_synced_catalog(platform, payload)
 
 
 class IntegrationGateway:
@@ -432,7 +441,17 @@ class IntegrationGateway:
             try:
                 if platform == 'shopify':
                     raw_products = connector.get_products()
-                    unified = [connector.map_product_to_unified(p) for p in raw_products]
+                    unified = []
+                    for raw in raw_products:
+                        recorded = _record_platform_catalog(platform, raw)
+                        if isinstance(recorded, dict) and recorded.get("ok") is False:
+                            logger.error(
+                                "Supply chain rejected a synced %s product: %s",
+                                platform,
+                                recorded.get("error") or "rejected",
+                            )
+                            continue
+                        unified.append(connector.map_product_to_unified(raw))
                     results[platform] = unified
                     logger.info(f"Synced {len(unified)} products from {platform}")
                 else:

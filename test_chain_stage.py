@@ -29,6 +29,7 @@ from chain_stage import (
     shopify_catalog_commands,
     shopify_fulfillment_commands,
     record_shopify_order_update,
+    record_synced_catalog,
     record_synced_sale,
     shopify_order_update_commands,
     shopify_return_commands,
@@ -5177,6 +5178,152 @@ class SettlementRouteTests(unittest.TestCase):
                 gateway.register_connector("shopify", repeat)
                 repeated = gateway.sync_appointments(["shopify"])
                 self.assertEqual(repeat.mapped, [9])
+                self.assertEqual(len(repeated["shopify"]), 1)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
+    def test_a_platform_sync_records_the_named_catalog_once(self) -> None:
+        self.assertIsNone(record_synced_catalog("shopify", "nope"))
+        self.assertIsNone(record_synced_catalog("wix", {"title": "Cleanser", "tags": "formula:cleanser"}))
+        product = {
+            "title": "Gentle cleanser",
+            "tags": "formula:cleanser",
+            "variants": [{"sku": "sku-cleanser"}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+
+            class _Products:
+                def __init__(self, rows):
+                    self.rows = rows
+                    self.mapped = []
+
+                def get_products(self):
+                    return self.rows
+
+                def map_product_to_unified(self, raw):
+                    self.mapped.append(raw.get("title") or "")
+                    return {"title": raw.get("title")}
+
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationGateway = importlib.import_module("integrations.gateway").IntegrationGateway
+                self.assertIsNone(
+                    record_synced_catalog(
+                        "shopify",
+                        {"title": "Cleanser", "tags": "retail", "variants": [{"sku": "sku-a"}]},
+                    )
+                )
+                self.assertIsNone(
+                    record_synced_catalog(
+                        "opencart",
+                        {"name": "Cleanser", "sku": "sku-a", "tags": "retail"},
+                    )
+                )
+                rejected = record_synced_catalog(
+                    "shopify",
+                    {"tags": "formula:cleanser", "variants": [{"sku": "sku-cleanser"}]},
+                )
+                self.assertFalse(rejected["ok"])
+                self.assertFalse(ledger.exists())
+                gateway = IntegrationGateway()
+                skipped = _Products(
+                    [
+                        {"title": "Shelf", "tags": "retail", "variants": [{"sku": "sku-a"}]},
+                        {"tags": "formula:cleanser", "variants": [{"sku": "sku-cleanser"}]},
+                    ]
+                )
+                gateway.register_connector("shopify", skipped)
+                synced = gateway.sync_products(["shopify"])
+                self.assertEqual(skipped.mapped, ["Shelf"])
+                self.assertEqual(len(synced["shopify"]), 1)
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {
+                                        "ingredient_id": "glycerin",
+                                        "inci": "Glycerin",
+                                        "cas": "56-81-5",
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 8000]],
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                recorded = record_synced_catalog("shopify", product)
+                self.assertTrue(recorded["ok"])
+                self.assertEqual(recorded["count"], 1)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"sku_id": "sku-cleanser"', text)
+                self.assertIn('"formula_id": "cleanser"', text)
+                again = record_synced_catalog("shopify", product)
+                self.assertTrue(again["ok"])
+                self.assertEqual(again["count"], 0)
+                same = record_synced_catalog(
+                    "opencart",
+                    {"name": "Gentle cleanser", "sku": "sku-cleanser", "tags": "formula:cleanser"},
+                )
+                self.assertTrue(same["ok"])
+                self.assertEqual(same["count"], 0)
+                changed = record_synced_catalog("shopify", {**product, "formulaId": "serum-c"})
+                self.assertFalse(changed["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                repeat = _Products([product])
+                gateway.register_connector("shopify", repeat)
+                repeated = gateway.sync_products(["shopify"])
+                self.assertEqual(repeat.mapped, ["Gentle cleanser"])
                 self.assertEqual(len(repeated["shopify"]), 1)
                 self.assertEqual(ledger.read_text(encoding="utf-8"), text)
             finally:
