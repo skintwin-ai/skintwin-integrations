@@ -59,6 +59,20 @@ def _record_shopify_order(order):
     return recorded
 
 
+def _draft_names_itself(draft) -> bool:
+    if not isinstance(draft, dict):
+        return False
+    for key in ("order_id", "name", "id"):
+        value = draft.get(key)
+        if isinstance(value, str):
+            if value.strip():
+                return True
+            continue
+        if value:
+            return True
+    return False
+
+
 def _record_shopify_draft(draft):
     """A completed draft records the same sale a webhook would record."""
     recorded = _chain_stage().record_draft_order(draft)
@@ -797,7 +811,11 @@ class ShopifyB2BConnector(BaseConnector):
         """
         endpoint = f"draft_orders/{draft_order_id}/complete.json"
         response = self.put(endpoint, {'payment_pending': payment_pending})
-        draft = response.get('draft_order', response)
+        draft = response.get('draft_order', response) if isinstance(response, dict) else {}
+        if isinstance(draft, dict) and not _draft_names_itself(draft):
+            draft = dict(draft)
+            if draft_order_id is not None:
+                draft["id"] = draft_order_id
         _record_shopify_draft(draft)
         return draft
     

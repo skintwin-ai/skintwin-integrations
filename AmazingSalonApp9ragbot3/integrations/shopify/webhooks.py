@@ -361,9 +361,11 @@ class ShopifyWebhookHandler:
         """Handle draft order deleted event."""
         draft_order_id = data.get('id')
         logger.info(f"Shopify draft order deleted: ID {draft_order_id}")
+        recorded = self._supply_chain("record_shopify_returns", data, "draft_orders/delete")
         return {
             'action': 'delete',
-            'draft_order_id': draft_order_id
+            'draft_order_id': draft_order_id,
+            'recorded': recorded,
         }
     
     # ==================== Inventory Handlers ====================
