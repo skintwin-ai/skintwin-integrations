@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -85,26 +84,14 @@ def _positive(value: object, label: str) -> int:
 def _commit(request: dict, result: tuple[dict, int]) -> tuple[dict, int]:
     if result[1] != 200 or os.environ.get("SKINTWIN_CHAIN_SKIP_DISPATCH") == "1":
         return result
-    ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
-    if not ledger:
+    if not os.environ.get("SKINTWIN_CHAIN_LEDGER"):
         return result
-    hub = _hub_root()
-    if hub is None:
+    locator = _locator()
+    if locator is None:
         return {"ok": False, "error": "supply-chain hub is not present"}, 400
-    completed = subprocess.run(
-        [sys.executable, "-m", "domain.ledger"],
-        input=json.dumps(request),
-        text=True,
-        capture_output=True,
-        cwd=hub,
-        check=False,
-    )
-    if completed.returncode != 0:
-        try:
-            message = json.loads(completed.stdout or "{}").get("error")
-        except json.JSONDecodeError:
-            message = None
-        return {"ok": False, "error": message or completed.stderr or "ledger rejected the command"}, 400
+    error = locator.commit_command(request)
+    if error:
+        return {"ok": False, "error": error}, 400
     return result
 
 
@@ -149,24 +136,9 @@ def _locate_script() -> Path | None:
     for parent in [start, *start.parents]:
         if not (parent / ".git").exists():
             continue
-        try:
-            children = list(parent.parent.iterdir())
-        except OSError:
-            return None
-        for child in children:
-            script = child / "domain" / "locate.py"
-            if script.is_file() and (child / "domain" / "org-ecosystem.json").is_file():
-                return script
-        return None
+        script = parent.parent / "skintwin-ecosystem-design" / "domain" / "locate.py"
+        return script if script.is_file() else None
     return None
-
-
-def _hub_root() -> Path | None:
-    locator = _locator()
-    if locator is None:
-        return None
-    found = locator.find_hub()
-    return Path(found) if found else None
 
 
 def main() -> None:
