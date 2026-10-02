@@ -85,9 +85,74 @@ def _opencart_order_label(order):
     return None
 
 
-def _record_saved_opencart_order(saved, order_id):
+def _opencart_names_a_sale(order):
+    """True when the order names a shipped sale. Invalid lines stay invalid."""
+    stage = _chain_stage()
+    if not isinstance(order, dict):
+        return False
+    probe = dict(order)
+    _copy_opencart_status_id(probe)
+    if stage._opencart_returned(probe):
+        return False
+    if not stage._order_label(probe, "order_id", "order_number", "id"):
+        probe["order_id"] = "named"
+    status = stage._opencart_status(probe)
+    if probe.get("fulfilled") is not True and status not in stage._OPENCART_SHIPPED:
+        probe["status"] = "shipped"
+    try:
+        return bool(stage.opencart_fulfillment_commands(probe))
+    except stage.StageRejection:
+        return None
+
+
+def _request_sale_lines(requested):
+    """The product list a request already states. An empty list is absent."""
+    if not isinstance(requested, dict):
+        return []
+    for key in ("products", "line_items", "items"):
+        value = requested.get(key)
+        if isinstance(value, list) and value:
+            return value
+    return []
+
+
+def _opencart_saved_lines(saved, requested):
+    """A saved shipment that omits its products draws the products the request already named.
+
+    A saved order that names its own sale keeps those products. An open or returned order is unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    stage = _chain_stage()
+    payload = dict(saved)
+    _copy_opencart_status_id(payload)
+    if stage._opencart_returned(payload):
+        return saved
+    status = stage._opencart_status(payload)
+    if payload.get("fulfilled") is not True and status not in stage._OPENCART_SHIPPED:
+        return saved
+    if _opencart_names_a_sale(payload) is not False:
+        return saved
+    if _opencart_names_a_sale(requested) is not True:
+        return saved
+    lines = _request_sale_lines(requested)
+    if not lines:
+        return saved
+    if payload.get("products") is not None:
+        payload["products"] = list(lines)
+    elif payload.get("line_items") is not None:
+        payload["line_items"] = list(lines)
+    elif payload.get("items") is not None:
+        payload["items"] = list(lines)
+    else:
+        payload["products"] = list(lines)
+    return payload
+
+
+def _record_saved_opencart_order(saved, order_id, requested=None):
     """A saved cancellation that omits its id returns the sale recorded for the order being created.
 
+    A saved shipment that omits its products draws the products the request already named.
     A saved order that names itself keeps that id. An open saved order is recorded unchanged.
     """
     if not isinstance(saved, dict):
@@ -100,6 +165,8 @@ def _record_saved_opencart_order(saved, order_id):
         and _chain_stage()._opencart_returned(payload)
     ):
         payload["order_id"] = order_id
+    if requested is not None:
+        payload = _opencart_saved_lines(payload, requested)
     return _record_named_opencart_sale(payload)
 
 
@@ -501,7 +568,11 @@ class OpenCartConnector(BaseConnector):
         # A cancellation that omits its id returns the sale this order already recorded.
         created = self.create_order()
         if created is not appointment_data:
-            _record_saved_opencart_order(created, _opencart_order_label(appointment_data))
+            _record_saved_opencart_order(
+                created,
+                _opencart_order_label(appointment_data),
+                appointment_data,
+            )
         return created
     
     def update_appointment(self, appointment_id: str, appointment_data: Dict) -> Dict:
@@ -525,7 +596,8 @@ class OpenCartConnector(BaseConnector):
                 comment=appointment_data.get('notes', '')
             )
             if saved is not appointment_data:
-                _record_named_opencart_sale(saved, appointment_id)
+                recorded = _opencart_saved_lines(saved, appointment_data) if isinstance(saved, dict) else saved
+                _record_named_opencart_sale(recorded, appointment_id)
             return saved
         
         return {'order_id': appointment_id, 'status': 'updated'}
