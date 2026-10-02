@@ -224,7 +224,7 @@ class ShopifyWebhookHandler:
         order_id = data.get('id')
         order_number = data.get('order_number')
         logger.info(f"Shopify order fulfilled: #{order_number} (ID: {order_id})")
-        recorded = self._supply_chain("record_shopify_fulfillments", data, "orders/fulfilled")
+        recorded = self._supply_chain("record_shopify_fulfilled_order", data, "orders/fulfilled")
         return {
             'action': 'fulfill',
             'order_id': order_id,
@@ -237,7 +237,7 @@ class ShopifyWebhookHandler:
         order_id = data.get('id')
         order_number = data.get('order_number')
         logger.info(f"Shopify order paid: #{order_number} (ID: {order_id})")
-        recorded = self._supply_chain("record_shopify_settlement", data, "orders/paid")
+        recorded = self._supply_chain("record_shopify_paid_order", data, "orders/paid")
         return {
             'action': 'paid',
             'order_id': order_id,

@@ -868,6 +868,36 @@ def record_shopify_order_update(order: dict) -> dict | None:
     return _commit_idempotent(commands)
 
 
+def record_shopify_paid_order(order: dict) -> dict | None:
+    """A paid order settles a sale that has shipped, and draws that sale first.
+
+    A paid order that has not shipped stays off the ledger. An explicit
+    fulfillment id still settles that sale.
+    """
+    if not isinstance(order, dict):
+        return {"ok": False, "error": "order is required"}
+    if _named(order, "fulfillment_id", "fulfillmentId"):
+        return record_shopify_settlement(order)
+    if str(order.get("fulfillment_status") or "").strip().lower() != "fulfilled":
+        return None
+    paid = dict(order)
+    if str(paid.get("financial_status") or "").strip().lower() != "paid":
+        paid["financial_status"] = "paid"
+    return record_shopify_order_update(paid)
+
+
+def record_shopify_fulfilled_order(order: dict) -> dict | None:
+    """A fulfilled order draws the named sale. A paid order also settles it."""
+    if not isinstance(order, dict):
+        return {"ok": False, "error": "order is required"}
+    fulfilled = dict(order)
+    if not _shopify_returned(fulfilled):
+        status = str(fulfilled.get("fulfillment_status") or "").strip().lower()
+        if status != "fulfilled":
+            fulfilled["fulfillment_status"] = "fulfilled"
+    return record_shopify_order_update(fulfilled)
+
+
 def record_synced_sale(platform: str, payload: dict) -> dict | None:
     """A platform sync records the same sale the webhook would record.
 
