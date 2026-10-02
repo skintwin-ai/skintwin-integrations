@@ -154,7 +154,7 @@ def respond(body: dict) -> tuple[dict, int]:
         artifact = settle(body.get("args") or {})
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}, 400
-    return _commit(body, ({"ok": True, "artifact": artifact}, 200))
+    return _commit({"command": "settle", "args": artifact}, ({"ok": True, "artifact": artifact}, 200))
 
 
 def _respond_many(commands: list) -> tuple[dict, int]:
@@ -188,7 +188,15 @@ def _text(value: object, label: str) -> str:
     return value.strip()
 
 
+def _whole_count(value: object) -> object:
+    """A digit string is that integer. Anything else is left as written."""
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return value
+
+
 def _positive(value: object, label: str) -> int:
+    value = _whole_count(value)
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise StageRejection(f"{label} must be a positive integer")
     return value
