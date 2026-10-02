@@ -757,6 +757,10 @@ def opencart_return_commands(order: dict) -> list[dict]:
         raise StageRejection("order is required")
     if not _opencart_returned(order):
         return []
+    label = _order_label(order, "order_id", "order_number", "id")
+    lines = _opencart_lines(order)
+    if not label and (not isinstance(lines, list) or not lines):
+        return []
     named = {
         key: value
         for key, value in order.items()

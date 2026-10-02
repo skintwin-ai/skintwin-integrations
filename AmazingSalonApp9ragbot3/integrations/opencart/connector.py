@@ -51,6 +51,14 @@ def _record_named_opencart_sale(order, order_id=None):
     payload = dict(order)
     if order_id and not str(payload.get("order_id") or payload.get("id") or "").strip():
         payload["order_id"] = order_id
+    _copy_opencart_status_id(payload)
+    recorded = _chain_stage().record_opencart_fulfillments(payload)
+    _reject_ledger(recorded, "order")
+    return recorded
+
+
+def _copy_opencart_status_id(payload):
+    """A status id is the order status when the payload does not name one."""
     status = str(payload.get("status") or payload.get("new_status") or payload.get("order_status") or "").strip()
     if (
         not status
@@ -59,9 +67,40 @@ def _record_named_opencart_sale(order, order_id=None):
         and payload.get("new_status_id") is None
     ):
         payload["order_status_id"] = payload["status_id"]
-    recorded = _chain_stage().record_opencart_fulfillments(payload)
-    _reject_ledger(recorded, "order")
-    return recorded
+
+
+def _opencart_order_label(order):
+    """The order id a payload already states. A blank one is absent."""
+    if not isinstance(order, dict):
+        return None
+    for key in ("order_id", "order_number", "id"):
+        value = order.get(key)
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            continue
+        if value and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _record_saved_opencart_order(saved, order_id):
+    """A saved cancellation that omits its id returns the sale recorded for the order being created.
+
+    A saved order that names itself keeps that id. An open saved order is recorded unchanged.
+    """
+    if not isinstance(saved, dict):
+        return None
+    payload = dict(saved)
+    _copy_opencart_status_id(payload)
+    if (
+        order_id is not None
+        and _opencart_order_label(payload) is None
+        and _chain_stage()._opencart_returned(payload)
+    ):
+        payload["order_id"] = order_id
+    return _record_named_opencart_sale(payload)
 
 
 class OpenCartConnector(BaseConnector):
@@ -459,9 +498,10 @@ class OpenCartConnector(BaseConnector):
             self.set_payment_address(appointment_data['billing_address'])
         
         # Create order. A sale on the created order is the same sale a webhook would record.
+        # A cancellation that omits its id returns the sale this order already recorded.
         created = self.create_order()
         if created is not appointment_data:
-            _record_named_opencart_sale(created)
+            _record_saved_opencart_order(created, _opencart_order_label(appointment_data))
         return created
     
     def update_appointment(self, appointment_id: str, appointment_data: Dict) -> Dict:
