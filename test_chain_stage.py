@@ -7065,6 +7065,202 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_confirmed_wix_booking_records_the_named_delivery_once(self) -> None:
+        delivery = {
+            "sku_id": "sku-serum-c",
+            "batch_id": "batch-1",
+            "source": "plant",
+            "destination": "cape-town",
+            "milligrams": 2000,
+        }
+        confirmed = {
+            "id": "book-1",
+            "services": [{"name": "Facial"}, {"delivery": delivery}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationError = importlib.import_module("integrations.common.exceptions").IntegrationError
+                WixBookingsConnector = importlib.import_module(
+                    "integrations.wix.connector"
+                ).WixBookingsConnector
+
+                class _Posted(WixBookingsConnector):
+                    def __init__(self):
+                        self.posted = []
+                        self.responses = []
+
+                    def post(self, endpoint, data=None):
+                        self.posted.append(endpoint)
+                        body = self.responses.pop(0)
+                        return {"booking": body}
+
+                connector = _Posted()
+                connector.responses.append({"id": "book-facial", "services": [{"name": "Facial"}]})
+                opened = connector.confirm_appointment("book-facial")
+                self.assertEqual(opened.get("id"), "book-facial")
+                self.assertEqual(connector.posted, ["/bookings/v2/bookings/book-facial/confirm"])
+                self.assertFalse(ledger.exists())
+                connector.responses.append(
+                    {
+                        "id": "book-bad",
+                        "services": [{"delivery": {**delivery, "milligrams": "lots"}}],
+                    }
+                )
+                with self.assertRaises(IntegrationError):
+                    connector.confirm_appointment("book-bad")
+                self.assertEqual(
+                    connector.posted,
+                    [
+                        "/bookings/v2/bookings/book-facial/confirm",
+                        "/bookings/v2/bookings/book-bad/confirm",
+                    ],
+                )
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {
+                                        "ingredient_id": "glycerin",
+                                        "inci": "Glycerin",
+                                        "cas": "56-81-5",
+                                    },
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 8000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 8000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 8000]],
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                connector.responses.append(confirmed)
+                booked = connector.confirm_appointment("book-1")
+                self.assertEqual(booked.get("id"), "book-1")
+                self.assertIn("/bookings/v2/bookings/book-1/confirm", connector.posted)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "book-1:1"', text)
+                self.assertIn('"milligrams": 2000', text)
+                connector.responses.append(confirmed)
+                again = connector.confirm_appointment("book-1")
+                self.assertEqual(again.get("id"), "book-1")
+                self.assertEqual(connector.posted.count("/bookings/v2/bookings/book-1/confirm"), 2)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                connector.responses.append(
+                    {
+                        **confirmed,
+                        "services": [
+                            {"name": "Facial"},
+                            {"delivery": {**delivery, "destination": "johannesburg"}},
+                        ],
+                    }
+                )
+                with self.assertRaises(IntegrationError):
+                    connector.confirm_appointment("book-1")
+                self.assertEqual(connector.posted.count("/bookings/v2/bookings/book-1/confirm"), 3)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                connector.responses.append({"services": [{"delivery": delivery}]})
+                moved = connector.confirm_appointment("book-2")
+                self.assertEqual(moved.get("services"), [{"delivery": delivery}])
+                self.assertEqual(connector.posted.count("/bookings/v2/bookings/book-2/confirm"), 1)
+                transferred = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "book-2:0"', transferred)
+                connector.responses.append({"services": [{"delivery": delivery}]})
+                repeated = connector.confirm_appointment("book-2")
+                self.assertEqual(repeated.get("services"), [{"delivery": delivery}])
+                self.assertEqual(connector.posted.count("/bookings/v2/bookings/book-2/confirm"), 2)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), transferred)
+                connector.responses.append(
+                    {"services": [{"delivery": {**delivery, "destination": "johannesburg"}}]}
+                )
+                with self.assertRaises(IntegrationError):
+                    connector.confirm_appointment("book-2")
+                self.assertEqual(connector.posted.count("/bookings/v2/bookings/book-2/confirm"), 3)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), transferred)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
 
 if __name__ == "__main__":
     unittest.main()
