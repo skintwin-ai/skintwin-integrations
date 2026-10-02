@@ -230,6 +230,21 @@ def formula_id_from_shopify(product: dict) -> str | None:
     return None
 
 
+def _named(record: object, *keys: str) -> str:
+    """The first non-blank string wins. A blank value falls through to the next key."""
+    if not isinstance(record, dict):
+        return ""
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _named_sku(record: object) -> str:
+    return _named(record, "sku", "sku_id", "skuId")
+
+
 def _catalog_skus(product: dict, name: str) -> list[str]:
     """Each variant that names a sku is its own catalog entry. A blank sku is not one."""
     variants = product.get("variants") if isinstance(product.get("variants"), list) else []
@@ -238,14 +253,14 @@ def _catalog_skus(product: dict, name: str) -> list[str]:
     for variant in variants:
         if not isinstance(variant, dict):
             continue
-        sku = variant.get("sku")
-        if not isinstance(sku, str) or not sku.strip() or sku.strip() in seen:
+        sku = _named_sku(variant)
+        if not sku or sku in seen:
             continue
-        seen.add(sku.strip())
-        skus.append(sku.strip())
+        seen.add(sku)
+        skus.append(sku)
     if skus:
         return skus
-    return [_text(product.get("sku") or name, "sku")]
+    return [_text(_named_sku(product) or name, "sku")]
 
 
 def shopify_catalog_commands(product: dict) -> list[dict]:
@@ -267,14 +282,14 @@ def shopify_catalog_commands(product: dict) -> list[dict]:
     for variant in variants:
         if not isinstance(variant, dict):
             continue
-        sku = variant.get("sku")
-        if not isinstance(sku, str) or not sku.strip() or sku.strip() in seen:
+        sku = _named_sku(variant)
+        if not sku or sku in seen:
             continue
         variant_formula = formula_id_from_shopify(variant)
         if variant_formula is None:
             continue
-        seen.add(sku.strip())
-        named.append((sku.strip(), variant_formula))
+        seen.add(sku)
+        named.append((sku, variant_formula))
     if not named:
         return []
     name = _text(product.get("title") or product.get("name"), "name")
@@ -319,8 +334,8 @@ def shopify_fulfillment_commands(order: dict) -> list[dict]:
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise StageRejection("each line item must be an object")
-        sku = item.get("sku")
-        if not isinstance(sku, str) or not sku.strip():
+        sku = _named_sku(item)
+        if not sku:
             continue
         location, milligrams, kind, practitioner = _shopify_line(item, defaults)
         if location is None and milligrams is None and kind is None:
@@ -328,8 +343,8 @@ def shopify_fulfillment_commands(order: dict) -> list[dict]:
         if not isinstance(location, str) or not location.strip() or milligrams is None:
             raise StageRejection(f"sku {sku} requires location and milligrams")
         args = {
-            "fulfillment_id": f"{order_id}:{index}:{sku.strip()}",
-            "sku_id": sku.strip(),
+            "fulfillment_id": f"{order_id}:{index}:{sku}",
+            "sku_id": sku,
             "location": location.strip(),
             "milligrams": _milligrams(milligrams),
             "kind": kind or "retail",
@@ -407,15 +422,15 @@ def shopify_refunded_line_commands(order: dict) -> list[dict]:
                 continue
             if refunded_qty != sold_qty:
                 continue
-            sku = line.get("sku")
-            if not isinstance(sku, str) or not sku.strip():
+            sku = _named_sku(line)
+            if not sku:
                 continue
             location, milligrams, _kind, _practitioner = _shopify_line(line, _order_line_defaults(order))
             if location is None and milligrams is None:
                 continue
             if not isinstance(location, str) or not location.strip() or milligrams is None:
                 raise StageRejection(f"sku {sku} requires location and milligrams")
-            fulfillment_id = f"{order_id}:{index}:{sku.strip()}"
+            fulfillment_id = f"{order_id}:{index}:{sku}"
             if fulfillment_id in seen:
                 continue
             seen.add(fulfillment_id)
@@ -498,8 +513,8 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
     for index, item in enumerate(order.get("line_items") or []):
         if not isinstance(item, dict):
             continue
-        sku = item.get("sku")
-        if not isinstance(sku, str) or not sku.strip():
+        sku = _named_sku(item)
+        if not sku:
             continue
         location, milligrams, _kind, _practitioner = _shopify_line(item, defaults)
         if location is None and milligrams is None:
@@ -511,8 +526,8 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
             {
                 "command": "settle",
                 "args": {
-                    "settlement_id": f"pay-{order_id}:{index}:{sku.strip()}",
-                    "fulfillment_id": f"{order_id}:{index}:{sku.strip()}",
+                    "settlement_id": f"pay-{order_id}:{index}:{sku}",
+                    "fulfillment_id": f"{order_id}:{index}:{sku}",
                     "amount_cents": _price_cents(item.get("price")) * quantity,
                     "currency": currency,
                 },
@@ -526,7 +541,7 @@ def opencart_catalog_commands(product: dict) -> list[dict]:
         return []
     mapped = {
         "title": product.get("name") or product.get("title"),
-        "sku": product.get("sku") or product.get("model"),
+        "sku": _named_sku(product) or _named(product, "model"),
         "tags": product.get("tags") if product.get("tags") is not None else product.get("tag"),
         "formula_id": product.get("formula_id") or product.get("formulaId"),
         "variants": product.get("variants"),
@@ -660,7 +675,7 @@ def _opencart_identity(item: dict) -> dict:
             options = item.get("options")
         properties = options if isinstance(options, list) else None
     return {
-        "sku": item.get("sku") or item.get("model"),
+        "sku": _named_sku(item) or _named(item, "model"),
         "location": item.get("location"),
         "milligrams": item.get("milligrams"),
         "properties": properties,
@@ -695,8 +710,8 @@ def wix_delivery_commands(booking: dict) -> list[dict]:
                 "command": "transfer",
                 "args": {
                     "transfer_id": f"{booking_id}:{index}",
-                    "sku_id": _text(delivery.get("sku_id"), "sku_id"),
-                    "batch_id": _text(delivery.get("batch_id"), "batch_id"),
+                    "sku_id": _text(_named(delivery, "sku_id", "skuId", "sku"), "sku_id"),
+                    "batch_id": _text(_named(delivery, "batch_id", "batchId"), "batch_id"),
                     "source": source,
                     "destination": destination,
                     "milligrams": _milligrams(delivery.get("milligrams")),
