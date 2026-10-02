@@ -52,6 +52,52 @@ def _record_shopify_catalog(product):
     return recorded
 
 
+def _sku_text(record):
+    """The sku a record already states. A blank one is absent."""
+    if not isinstance(record, dict):
+        return ""
+    for key in ("sku", "sku_id", "skuId"):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _variant_sku_rows(product):
+    """Variant rows that name a sku. A blank sku is not one."""
+    if not isinstance(product, dict):
+        return []
+    variants = product.get("variants")
+    if not isinstance(variants, list):
+        return []
+    rows = []
+    seen = set()
+    for variant in variants:
+        sku = _sku_text(variant)
+        if not sku or sku in seen:
+            continue
+        seen.add(sku)
+        rows.append(variant)
+    return rows
+
+
+def _saved_shopify_product(saved, requested):
+    """A saved product that names a formula and omits variant skus catalogs the skus the request already named.
+
+    A saved product that names its own sku keeps that sku. A product with no formula is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    if _chain_stage().formula_id_from_shopify(saved) is None:
+        return saved
+    if _variant_sku_rows(saved) or _sku_text(saved):
+        return saved
+    named = _variant_sku_rows(requested)
+    if not named:
+        return saved
+    return {**saved, "variants": list(named)}
+
+
 def _record_shopify_order(order):
     """A created or updated order records the same sale a webhook would record."""
     recorded = _chain_stage().record_shopify_order_update(order)
@@ -370,7 +416,7 @@ class ShopifyB2BConnector(BaseConnector):
         response = self.post(self.ENDPOINTS['products'], {'product': product_data})
         saved = response.get('product', response)
         if saved is not product_data:
-            _record_shopify_catalog(saved)
+            _record_shopify_catalog(_saved_shopify_product(saved, product_data))
         return saved
     
     def update_product(self, product_id: int, product_data: Dict) -> Dict[str, Any]:
@@ -389,7 +435,7 @@ class ShopifyB2BConnector(BaseConnector):
         response = self.put(endpoint, {'product': product_data})
         saved = response.get('product', response)
         if saved is not product_data:
-            _record_shopify_catalog(saved)
+            _record_shopify_catalog(_saved_shopify_product(saved, product_data))
         return saved
     
     def delete_product(self, product_id: int) -> bool:
