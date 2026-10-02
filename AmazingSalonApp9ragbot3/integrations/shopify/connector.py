@@ -59,6 +59,13 @@ def _record_shopify_order(order):
     return recorded
 
 
+def _record_shopify_draft(draft):
+    """A completed draft records the same sale a webhook would record."""
+    recorded = _chain_stage().record_draft_order(draft)
+    _reject_ledger(recorded, "draft")
+    return recorded
+
+
 class ShopifyB2BConnector(BaseConnector):
     """
     Connector for Shopify Admin API with B2B features.
@@ -745,7 +752,9 @@ class ShopifyB2BConnector(BaseConnector):
         """
         endpoint = f"draft_orders/{draft_order_id}/complete.json"
         response = self.put(endpoint, {'payment_pending': payment_pending})
-        return response.get('draft_order', response)
+        draft = response.get('draft_order', response)
+        _record_shopify_draft(draft)
+        return draft
     
     # ==================== Webhook Operations ====================
     
