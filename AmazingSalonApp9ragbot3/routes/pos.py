@@ -580,6 +580,12 @@ def confirm_payment():
     
     if not payment_intent_id or not client_id:
         return jsonify({'error': 'Missing required data'}), 400
+
+    confirmed = _settle_chain_payment(data, data.get('amount'))
+    if confirmed is not None:
+        body, status = confirmed
+        if status != 200:
+            return jsonify(body), status
     
     # Get loyalty points configuration
     points_per_dollar = ConfigManager.get_points_per_dollar()

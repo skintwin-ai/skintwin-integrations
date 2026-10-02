@@ -26,6 +26,24 @@ class SettlementRouteTests(unittest.TestCase):
     def test_payment_without_a_fulfillment_is_not_a_settlement(self) -> None:
         self.assertIsNone(settlement_for_payment({"amount": 10, "currency": "USD"}))
 
+    def test_confirmed_payment_names_the_fulfillment_it_closes(self) -> None:
+        previous = os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+        try:
+            body, status = settlement_for_payment(
+                {
+                    "settlement_id": "pay-confirm",
+                    "fulfillment_id": "order-retail",
+                    "amount": 45.5,
+                    "currency": "ZAR",
+                }
+            )
+        finally:
+            if previous is not None:
+                os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+        self.assertEqual(status, 200)
+        self.assertEqual(body["artifact"]["settlement_id"], "pay-confirm")
+        self.assertEqual(body["artifact"]["amount_cents"], 4550)
+
     def test_payment_amount_is_recorded_in_cents(self) -> None:
         previous = os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
         try:
