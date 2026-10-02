@@ -786,13 +786,18 @@ _LINE_ATTRIBUTES = ("location", "milligrams", "kind", "practitioner_id")
 
 
 def _attribute_values(entries: object) -> dict:
+    """Line properties and note attributes name a sale.
+
+    REST payloads use name. GraphQL custom attributes use key.
+    A present name wins, so a gift name does not fall through to a location key.
+    """
     found: dict[str, object] = {}
     if not isinstance(entries, list):
         return found
     for prop in entries:
         if not isinstance(prop, dict):
             continue
-        name = str(prop.get("name") or "").strip().lower()
+        name = str(prop.get("name") or prop.get("key") or "").strip().lower()
         if name not in _LINE_ATTRIBUTES or name in found:
             continue
         found[name] = prop.get("value")
