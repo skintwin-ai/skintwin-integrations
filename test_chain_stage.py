@@ -1224,6 +1224,74 @@ class SettlementRouteTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertFalse(body["ok"])
 
+    def _webhook_module(self, platform: str):
+        import importlib
+        import types
+
+        root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+
+        def ensure(name: str, path: Path):
+            current = sys.modules.get(name)
+            if current is not None and getattr(current, "__path__", None):
+                return current
+            module = types.ModuleType(name)
+            module.__path__ = [str(path)]
+            module.__package__ = name
+            sys.modules[name] = module
+            return module
+
+        ensure("integrations", root)
+        ensure("integrations.common", root / "common")
+        ensure(f"integrations.{platform}", root / platform)
+        return importlib.import_module(f"integrations.{platform}.webhooks")
+
+    def test_a_created_order_records_only_when_it_already_names_a_sale(self) -> None:
+        shopify = self._webhook_module("shopify")
+        opencart = self._webhook_module("opencart")
+        directory = Path(tempfile.mkdtemp())
+        ledger = directory / "supply-chain.jsonl"
+        previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+        os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+        line = {
+            "sku": "sku-serum-c",
+            "quantity": 1,
+            "location": "cape-town",
+            "milligrams": 2000,
+            "price": "185.00",
+        }
+        try:
+            created = shopify.ShopifyWebhookHandler("secret").on_order_created(
+                {"id": 11, "order_number": 11, "line_items": [line]}
+            )
+            self.assertIsNone(created["recorded"])
+            self.assertFalse(ledger.exists())
+            with self.assertRaises(shopify.WebhookError):
+                shopify.ShopifyWebhookHandler("secret").on_order_created(
+                    {
+                        "id": 11,
+                        "order_number": 11,
+                        "fulfillment_status": "fulfilled",
+                        "financial_status": "paid",
+                        "line_items": [line],
+                    }
+                )
+            self.assertFalse(ledger.exists())
+            pending = opencart.OpenCartWebhookHandler("secret").on_order_created(
+                {"order_id": 8, "status": "pending", "products": [line]}
+            )
+            self.assertIsNone(pending["recorded"])
+            self.assertFalse(ledger.exists())
+            with self.assertRaises(opencart.WebhookError):
+                opencart.OpenCartWebhookHandler("secret").on_order_created(
+                    {"order_id": 8, "status": "complete", "currency_code": "ZAR", "products": [line]}
+                )
+            self.assertFalse(ledger.exists())
+        finally:
+            if previous_ledger is None:
+                os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+            else:
+                os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -139,10 +139,15 @@ class OpenCartWebhookHandler:
     # Default event handlers
     
     def on_order_created(self, data: Dict) -> Dict:
-        """Handle order created event."""
+        """Handle order created event.
+
+        A pending order stays off the ledger. A created order that is already shipped,
+        paid, or returned uses the same recorder as order/updated.
+        """
         order_id = data.get('order_id')
         logger.info(f"OpenCart order created: {order_id}")
-        return {'action': 'create', 'order_id': order_id}
+        recorded = self._supply_chain("record_opencart_fulfillments", data, "order/created")
+        return {'action': 'create', 'order_id': order_id, 'recorded': recorded}
     
     def on_order_updated(self, data: Dict) -> Dict:
         """Handle order updated event."""

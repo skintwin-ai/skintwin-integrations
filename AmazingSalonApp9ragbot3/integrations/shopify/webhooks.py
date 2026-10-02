@@ -177,14 +177,20 @@ class ShopifyWebhookHandler:
     # ==================== Order Handlers ====================
     
     def on_order_created(self, data: Dict) -> Dict:
-        """Handle order created event."""
+        """Handle order created event.
+
+        An open order stays off the ledger. A created order that is already fulfilled,
+        paid, or returned uses the same recorder as orders/updated.
+        """
         order_id = data.get('id')
         order_number = data.get('order_number')
         logger.info(f"Shopify order created: #{order_number} (ID: {order_id})")
+        recorded = self._supply_chain("record_shopify_order_update", data, "orders/create")
         return {
             'action': 'create',
             'order_id': order_id,
-            'order_number': order_number
+            'order_number': order_number,
+            'recorded': recorded,
         }
     
     def on_order_updated(self, data: Dict) -> Dict:
