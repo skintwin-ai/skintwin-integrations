@@ -107,6 +107,25 @@ with app.app_context():
     from routes import trends
     trends.register_routes(app)
 
+@app.route('/api/supply-chain', methods=['POST'])
+def supply_chain_command():
+    """Accept a settlement command before the hub ledger records it."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from chain_stage import _hub_root, respond
+
+    hub = _hub_root()
+    if hub is not None:
+        os.environ.setdefault("SKINTWIN_HUB_ROOT", str(hub))
+        os.environ.setdefault("SKINTWIN_CHAIN_LEDGER", str(hub / "var" / "supply-chain.jsonl"))
+    body, status = respond(request.get_json(silent=True) or {})
+    return jsonify(body), status
+
+
 @app.route('/')
 def index():
     from flask import render_template, redirect, url_for
