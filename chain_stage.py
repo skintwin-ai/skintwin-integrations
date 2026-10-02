@@ -500,16 +500,7 @@ def opencart_fulfillment_commands(order: dict) -> list[dict]:
     for item in order.get("products") or order.get("line_items") or []:
         if not isinstance(item, dict):
             raise StageRejection("each product must be an object")
-        items.append(
-            {
-                "sku": item.get("sku") or item.get("model"),
-                "location": item.get("location"),
-                "milligrams": item.get("milligrams"),
-                "properties": item.get("properties"),
-                "kind": item.get("kind"),
-                "practitioner_id": item.get("practitioner_id"),
-            }
-        )
+        items.append(_opencart_identity(item))
     return shopify_fulfillment_commands(
         {
             "order_number": order.get("order_id") or order.get("order_number") or order.get("id"),
@@ -538,16 +529,10 @@ def opencart_settlement_commands(order: dict) -> list[dict]:
             quantity = 1
         if price is None:
             continue
-        items.append(
-            {
-                "sku": item.get("sku") or item.get("model"),
-                "location": item.get("location"),
-                "milligrams": item.get("milligrams"),
-                "properties": item.get("properties"),
-                "price": price,
-                "quantity": _quantity(quantity) if price is not None else 1,
-            }
-        )
+        line = _opencart_identity(item)
+        line["price"] = price
+        line["quantity"] = _quantity(quantity)
+        items.append(line)
     return shopify_settlement_commands(
         {
             "order_number": order.get("order_id") or order.get("order_number") or order.get("id"),
@@ -611,6 +596,24 @@ def _opencart_status_code(value: object) -> int | None:
 
 def _opencart_returned(order: dict) -> bool:
     return order.get("returned") is True or _opencart_status(order) in _OPENCART_RETURNED
+
+
+def _opencart_identity(item: dict) -> dict:
+    """A line field names the sale. Product options do when the line does not."""
+    properties = item.get("properties")
+    if properties is None:
+        options = item.get("option")
+        if not isinstance(options, list):
+            options = item.get("options")
+        properties = options if isinstance(options, list) else None
+    return {
+        "sku": item.get("sku") or item.get("model"),
+        "location": item.get("location"),
+        "milligrams": item.get("milligrams"),
+        "properties": properties,
+        "kind": item.get("kind"),
+        "practitioner_id": item.get("practitioner_id"),
+    }
 
 
 def wix_delivery_commands(booking: dict) -> list[dict]:
