@@ -197,6 +197,55 @@ def _saved_shopify_fulfilled_lines(saved, requested):
     return stamped
 
 
+def _saved_refund_lines(order) -> list:
+    """Refund lines a saved order already states. A missing list is none."""
+    if not isinstance(order, dict):
+        return []
+    refunds = order.get("refunds")
+    if not isinstance(refunds, list):
+        return []
+    lines = []
+    for refund in refunds:
+        if not isinstance(refund, dict):
+            continue
+        items = refund.get("refund_line_items")
+        if isinstance(items, list):
+            lines.extend(items)
+    return lines
+
+
+def _saved_shopify_refunds(saved, requested):
+    """A saved partial refund that omits its refund lines returns the sale the request already named.
+
+    A saved refund that names its own lines keeps those lines. An open saved order stays unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    if str(saved.get("fulfillment_status") or "").strip().lower() != "fulfilled":
+        return saved
+    if str(saved.get("financial_status") or "").strip().lower() != "partially_refunded":
+        return saved
+    stage = _chain_stage()
+    if stage._shopify_returned(saved):
+        return saved
+    refunds = saved.get("refunds")
+    if refunds is not None and not isinstance(refunds, list):
+        return saved
+    if _saved_refund_lines(saved):
+        return saved
+    requested_refunds = requested.get("refunds")
+    if not isinstance(requested_refunds, list) or not requested_refunds:
+        return saved
+    stamped = {**saved, "refunds": list(requested_refunds)}
+    try:
+        named = stage.shopify_refunded_line_commands(stamped)
+    except stage.StageRejection:
+        return saved
+    if not named:
+        return saved
+    return stamped
+
+
 def _draft_names_itself(draft) -> bool:
     if not isinstance(draft, dict):
         return False
@@ -610,7 +659,8 @@ class ShopifyB2BConnector(BaseConnector):
         saved = response.get('order', response)
         if saved is not order_data:
             recorded = _saved_shopify_order(saved, _stated_order_id(order_data))
-            _record_shopify_order(_saved_shopify_fulfilled_lines(recorded, order_data))
+            recorded = _saved_shopify_fulfilled_lines(recorded, order_data)
+            _record_shopify_order(_saved_shopify_refunds(recorded, order_data))
         return saved
     
     def update_order(self, order_id: int, order_data: Dict) -> Dict[str, Any]:
@@ -630,7 +680,8 @@ class ShopifyB2BConnector(BaseConnector):
         saved = response.get('order', response)
         if saved is not order_data:
             recorded = _saved_shopify_order(saved, order_id)
-            _record_shopify_order(_saved_shopify_fulfilled_lines(recorded, order_data))
+            recorded = _saved_shopify_fulfilled_lines(recorded, order_data)
+            _record_shopify_order(_saved_shopify_refunds(recorded, order_data))
         return saved
     
     def cancel_order(self, order_id: int, reason: str = "other") -> Dict[str, Any]:
