@@ -47,6 +47,11 @@ def _record_platform_catalog(platform: str, payload):
     return _chain_stage().record_synced_catalog(platform, payload)
 
 
+def _record_platform_draft(payload):
+    """Record a created draft with the same sale command a webhook would use."""
+    return _chain_stage().record_draft_order(payload)
+
+
 class IntegrationGateway:
     """
     Unified API Gateway for managing all platform integrations.
@@ -519,7 +524,9 @@ class IntegrationGateway:
         shopify = self._connectors.get('shopify')
         if not shopify or not isinstance(shopify, ShopifyB2BConnector):
             raise IntegrationError("Shopify B2B connector not available")
-        
+        recorded = _record_platform_draft(draft_order_data)
+        if isinstance(recorded, dict) and recorded.get("ok") is False:
+            raise IntegrationError(recorded.get("error") or "supply chain rejected the draft")
         return shopify.create_draft_order(draft_order_data)
     
     # ==================== Webhook Registration ====================
