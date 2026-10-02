@@ -231,6 +231,46 @@ def _saved_shopify_draft(saved, requested):
     return {**saved, "id": known}
 
 
+def _draft_names_a_sale(draft):
+    """True when the draft names a completed sale. Invalid lines stay invalid."""
+    stage = _chain_stage()
+    if not isinstance(draft, dict):
+        return False
+    probe = dict(draft)
+    if str(probe.get("status") or "").strip().lower() != "completed":
+        probe["status"] = "completed"
+    if not stage._order_label(probe, "order_id", "name", "id"):
+        probe["id"] = "named"
+    try:
+        return bool(stage.draft_order_commands(probe))
+    except stage.StageRejection:
+        return None
+
+
+def _saved_shopify_draft_lines(saved, requested):
+    """A completed draft that omits its sale lines draws the lines the request already named.
+
+    A saved draft that names its own sale keeps those lines. An open draft is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    if str(saved.get("status") or "").strip().lower() != "completed":
+        return saved
+    if _draft_names_a_sale(saved) is not False:
+        return saved
+    if _draft_names_a_sale(requested) is not True:
+        return saved
+    lines = requested.get("line_items")
+    if lines is None:
+        lines = requested.get("items")
+    if not isinstance(lines, list) or not lines:
+        return saved
+    stamped = {**saved, "line_items": list(lines)}
+    if not saved.get("note_attributes") and requested.get("note_attributes"):
+        stamped["note_attributes"] = requested.get("note_attributes")
+    return stamped
+
+
 def _order_names_itself(order) -> bool:
     if not isinstance(order, dict):
         return False
@@ -912,7 +952,8 @@ class ShopifyB2BConnector(BaseConnector):
         )
         saved = response.get('draft_order', response)
         if saved is not draft_order_data:
-            _record_shopify_draft(_saved_shopify_draft(saved, draft_order_data))
+            recorded = _saved_shopify_draft(saved, draft_order_data)
+            _record_shopify_draft(_saved_shopify_draft_lines(recorded, draft_order_data))
         return saved
     
     def send_draft_order_invoice(
