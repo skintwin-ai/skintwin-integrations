@@ -812,10 +812,38 @@ def record_opencart_fulfillments(order: dict) -> dict | None:
     return _commit_idempotent(commands)
 
 
+def _recorded_wix_deliveries(booking: dict) -> list[dict]:
+    """Deliveries already moved for this booking, when the cancel payload omits them."""
+    nested = booking.get("booking") if isinstance(booking.get("booking"), dict) else booking
+    booking_id = _text(str(nested.get("id") or ""), "booking id")
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw or not Path(raw).is_file():
+        return []
+    prefix = f"{booking_id}:"
+    found: dict[str, dict] = {}
+    for line in Path(raw).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "transfer":
+            continue
+        args = record.get("args") or {}
+        transfer_id = args.get("transfer_id")
+        if not isinstance(transfer_id, str) or not transfer_id.startswith(prefix):
+            continue
+        if not transfer_id[len(prefix) :].isdigit():
+            continue
+        found[transfer_id] = {"command": "transfer", "args": args}
+    return list(found.values())
+
+
 def wix_return_commands(booking: dict) -> list[dict]:
     """A cancelled booking sends the named delivery back to its source."""
+    forwards = wix_delivery_commands(booking)
+    if not forwards:
+        forwards = _recorded_wix_deliveries(booking)
     commands = []
-    for command in wix_delivery_commands(booking):
+    for command in forwards:
         args = command["args"]
         commands.append(
             {

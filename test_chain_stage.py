@@ -2540,6 +2540,124 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_cancelled_wix_booking_returns_the_delivery_it_already_recorded(self) -> None:
+        delivery = {
+            "sku_id": "sku-serum-c",
+            "batch_id": "batch-1",
+            "source": "plant",
+            "destination": "cape-town",
+            "milligrams": 2000,
+        }
+        booking = {"id": "book-omit", "services": [{"name": "Facial"}, {"delivery": delivery}]}
+        omitted = {"id": "book-omit", "services": [{"name": "Facial"}]}
+        self.assertEqual(wix_return_commands(omitted), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "cleanser",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "xfer-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 1000,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                wix = self._webhook_module("wix")
+                created = wix.WixWebhookHandler("secret").on_booking_created(booking)
+                self.assertEqual(created["recorded"], {"ok": True, "count": 1})
+                commands = wix_return_commands(omitted)
+                self.assertEqual(commands[0]["args"]["transfer_id"], "return:book-omit:1")
+                self.assertEqual(commands[0]["args"]["source"], "cape-town")
+                self.assertEqual(commands[0]["args"]["destination"], "plant")
+                self.assertEqual(commands[0]["args"]["milligrams"], 2000)
+                cancelled = wix.WixWebhookHandler("secret").on_booking_cancelled(omitted)
+                self.assertEqual(cancelled["recorded"], {"ok": True, "count": 1})
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "return:book-omit:1"', text)
+                self.assertNotIn('"transfer_id": "return:xfer-cape-town"', text)
+                again = wix.WixWebhookHandler("secret").on_booking_cancelled(omitted)
+                self.assertEqual(again["recorded"], {"ok": True, "count": 0})
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
     def test_a_paid_opencart_order_settles_a_shipped_sale_once(self) -> None:
         product = {
             "model": "sku-serum-c",
