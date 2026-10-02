@@ -9598,7 +9598,10 @@ class SettlementRouteTests(unittest.TestCase):
                         "book-1",
                         {
                             "status": "CANCELED",
-                            "services": [{"delivery": {**delivery, "milligrams": 1000}}],
+                            "services": [
+                                {"name": "Facial"},
+                                {"delivery": {**delivery, "milligrams": 1000}},
+                            ],
                         },
                     )
                 self.assertEqual(len(connector.updated), before_named)
