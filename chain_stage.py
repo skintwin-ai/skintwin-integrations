@@ -25,6 +25,30 @@ def settle(args: dict) -> dict:
     }
 
 
+def return_for_refund(data: dict) -> tuple[dict, int] | None:
+    """Return a sale when a refund names the fulfillment it closes."""
+    if not isinstance(data, dict) or not data.get("fulfillment_id"):
+        return None
+    fulfillment_id = data.get("fulfillment_id")
+    return_id = data.get("return_id") or f"return:{fulfillment_id}"
+    try:
+        artifact = {
+            "return_id": _text(return_id, "return_id"),
+            "fulfillment_id": _text(fulfillment_id, "fulfillment_id"),
+        }
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}, 400
+    if not os.environ.get("SKINTWIN_CHAIN_LEDGER"):
+        return {"ok": True, "artifact": artifact}, 200
+    locator = _locator()
+    if locator is None:
+        return {"ok": False, "error": "supply-chain hub is not present"}, 400
+    error = locator.commit_commands([{"command": "return_sale", "args": artifact}])
+    if error:
+        return {"ok": False, "error": error}, 400
+    return {"ok": True, "artifact": artifact}, 200
+
+
 def settlement_for_payment(data: dict) -> tuple[dict, int] | None:
     """Settle a payment that names a fulfillment before the processor runs."""
     if not isinstance(data, dict) or not data.get("fulfillment_id"):

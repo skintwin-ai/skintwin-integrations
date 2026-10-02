@@ -18,6 +18,7 @@ from chain_stage import (
     record_shopify_fulfillments,
     record_shopify_returns,
     record_shopify_settlement,
+    return_for_refund,
     record_wix_deliveries,
     respond,
     settlement_for_payment,
@@ -763,6 +764,137 @@ class SettlementRouteTests(unittest.TestCase):
                 changed = record_shopify_returns(shopify_order)
                 self.assertFalse(changed["ok"])
                 self.assertEqual(ledger.read_text(encoding="utf-8"), mutated)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
+    def test_a_pos_refund_returns_the_named_sale_once(self) -> None:
+        self.assertIsNone(return_for_refund({"amount": 10}))
+        previous = os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+        try:
+            body, status = return_for_refund(
+                {"fulfillment_id": "order-retail", "return_id": "return:tx-1:order-retail"}
+            )
+        finally:
+            if previous is not None:
+                os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+        self.assertEqual(status, 200)
+        self.assertEqual(body["artifact"]["return_id"], "return:tx-1:order-retail")
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                missing_body, missing_status = return_for_refund(
+                    {"fulfillment_id": "order-retail", "return_id": "return:tx-1:order-retail"}
+                )
+                self.assertEqual(missing_status, 400)
+                self.assertFalse(missing_body["ok"])
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "cleanser",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "to-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 5000,
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "order-retail",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                body, status = return_for_refund(
+                    {"fulfillment_id": "order-retail", "return_id": "return:tx-1:order-retail"}
+                )
+                self.assertEqual(status, 200)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn("return:tx-1:order-retail", text)
+                again_body, again_status = return_for_refund(
+                    {"fulfillment_id": "order-retail", "return_id": "return:tx-1:order-retail"}
+                )
+                self.assertEqual(again_status, 400)
+                self.assertFalse(again_body["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)

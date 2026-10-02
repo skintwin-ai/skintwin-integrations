@@ -36,6 +36,33 @@ def _settle_chain_payment(payment, amount):
     }
     return settlement_for_payment(payload)
 
+
+def _payment_field(payment, name):
+    if isinstance(payment, dict):
+        return payment.get(name)
+    return getattr(payment, name, None)
+
+
+def _return_chain_sale(fulfillment_id, transaction_id):
+    """Return the sale before the processor refunds the payment."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from chain_stage import return_for_refund, use_shared_ledger
+
+    if not isinstance(fulfillment_id, str) or not fulfillment_id.strip():
+        return None
+    use_shared_ledger()
+    return return_for_refund(
+        {
+            "fulfillment_id": fulfillment_id.strip(),
+            "return_id": f"return:{transaction_id}:{fulfillment_id.strip()}",
+        }
+    )
+
 # Initialize Stripe with the API key from ConfigManager or fallback to environment variable
 stripe_secret_key = ConfigManager.get_stripe_secret_key() or os.environ.get('STRIPE_SECRET_KEY')
 if stripe_secret_key:
@@ -427,7 +454,8 @@ def create_transaction_route():
                     payment_method_id=payment_method_id,
                     payment_intent_id=payment_intent.id,
                     points_used=points_to_redeem,
-                    payment_provider=payment_provider
+                    payment_provider=payment_provider,
+                    fulfillment_id=payment.get("fulfillment_id"),
                 )
                 transaction_id = transaction.id
                 
@@ -463,7 +491,8 @@ def create_transaction_route():
                     client_id=client_id, 
                     amount=amount, 
                     description=description,
-                    points_used=points_to_redeem
+                    points_used=points_to_redeem,
+                    fulfillment_id=payment.get("fulfillment_id"),
                 )
                 
                 # Update client's loyalty points in old system
@@ -618,7 +647,8 @@ def confirm_payment():
                 payment_method_id=payment_method_id,
                 payment_intent_id=payment_intent_id,
                 points_used=0,  # Cannot redeem points at this stage
-                payment_provider=payment_provider
+                payment_provider=payment_provider,
+                fulfillment_id=data.get('fulfillment_id'),
             )
             transaction_id = transaction.id
             
@@ -650,7 +680,8 @@ def confirm_payment():
                 client_id=client_id,
                 amount=amount,
                 description=description,
-                points_used=0
+                points_used=0,
+                fulfillment_id=data.get('fulfillment_id'),
             )
             
             # Update client's loyalty points in old system
@@ -736,6 +767,16 @@ def refund_transaction(id):
         if not payment_intent_id:
             flash('This transaction has no associated payment to refund')
             return redirect(url_for('pos.index'))
+
+        fulfillment_id = _payment_field(transaction, "fulfillment_id")
+        if request.is_json:
+            fulfillment_id = fulfillment_id or (request.get_json(silent=True) or {}).get("fulfillment_id")
+        returned = _return_chain_sale(fulfillment_id, id)
+        if returned is not None:
+            body, status = returned
+            if status != 200:
+                flash(body.get("error") or "supply chain rejected the return", "error")
+                return redirect(url_for("pos.index"))
         
         # Process the refund through the appropriate payment provider
         if payment_provider == 'stripe':

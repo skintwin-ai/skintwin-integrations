@@ -101,7 +101,7 @@ def delete_appointment(appointment_id):
         return True
     return False
 
-def create_transaction(client_id, amount, description, points_used=0):
+def create_transaction(client_id, amount, description, points_used=0, fulfillment_id=None):
     transaction_id = f"transaction_{int(datetime.utcnow().timestamp())}"
 
     # Calculate points earned (1 point per dollar)
@@ -131,7 +131,7 @@ def create_transaction(client_id, amount, description, points_used=0):
         })
         db[client_id] = client
 
-    db[transaction_id] = {
+    record = {
         "client_id": client_id,
         "amount": amount,
         "date_time": datetime.utcnow().isoformat(),
@@ -139,6 +139,9 @@ def create_transaction(client_id, amount, description, points_used=0):
         "points_earned": points_earned,
         "points_used": points_used
     }
+    if fulfillment_id:
+        record["fulfillment_id"] = fulfillment_id
+    db[transaction_id] = record
     return transaction_id
 
 def get_transaction(transaction_id):
