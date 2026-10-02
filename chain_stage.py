@@ -372,13 +372,32 @@ def draft_order_commands(draft: dict) -> list[dict]:
     )
 
 
+def _sale_lines(order: dict) -> object:
+    """A present line_items list wins. A missing one falls through to appointment items."""
+    if not isinstance(order, dict):
+        return []
+    if order.get("line_items") is not None:
+        return order.get("line_items")
+    if order.get("items") is not None:
+        return order.get("items")
+    return []
+
+
+def _opencart_lines(order: dict) -> object:
+    """A present products list wins, then line_items, then the cart items."""
+    if not isinstance(order, dict):
+        return []
+    for key in ("products", "line_items", "items"):
+        if order.get(key) is not None:
+            return order.get(key)
+    return []
+
+
 def shopify_fulfillment_commands(order: dict) -> list[dict]:
     if not isinstance(order, dict):
         raise StageRejection("order is required")
     order_id = _text(_order_label(order, "order_number", "name", "id"), "order number")
-    items = order.get("line_items")
-    if items is None:
-        items = []
+    items = _sale_lines(order)
     if not isinstance(items, list):
         raise StageRejection("line_items must be a list")
     commands = []
@@ -430,7 +449,7 @@ def shopify_refunded_line_commands(order: dict) -> list[dict]:
     """
     if not isinstance(order, dict):
         raise StageRejection("order is required")
-    items = order.get("line_items") or []
+    items = _sale_lines(order)
     if not isinstance(items, list):
         raise StageRejection("line_items must be a list")
     indexes: dict[object, int] = {}
@@ -560,7 +579,7 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
     commands = []
     order_id = _order_label(order, "order_number", "name", "id")
     defaults = _order_line_defaults(order)
-    for index, item in enumerate(order.get("line_items") or []):
+    for index, item in enumerate(_sale_lines(order)):
         if not isinstance(item, dict):
             continue
         sku = _named_sku(item)
@@ -613,7 +632,7 @@ def opencart_fulfillment_commands(order: dict) -> list[dict]:
     if order.get("fulfilled") is not True and status not in _OPENCART_SHIPPED:
         return []
     items = []
-    for item in order.get("products") or order.get("line_items") or []:
+    for item in _opencart_lines(order):
         if not isinstance(item, dict):
             raise StageRejection("each product must be an object")
         items.append(_opencart_identity(item))
@@ -635,7 +654,7 @@ def opencart_settlement_commands(order: dict) -> list[dict]:
     if order.get("paid") is not True and status not in _OPENCART_PAID:
         return []
     items = []
-    for item in order.get("products") or order.get("line_items") or []:
+    for item in _opencart_lines(order):
         if not isinstance(item, dict):
             raise StageRejection("each product must be an object")
         price = item.get("price")
