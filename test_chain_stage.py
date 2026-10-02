@@ -2144,6 +2144,42 @@ class SettlementRouteTests(unittest.TestCase):
         omitted_id_commands = shopify_order_update_commands(omitted_id)
         self.assertEqual([command["command"] for command in omitted_id_commands], ["fulfill", "return_sale"])
         self.assertEqual(omitted_id_commands[1]["args"]["fulfillment_id"], "9:0:sku-serum-c")
+        sole = {
+            **paid,
+            "financial_status": "partially_refunded",
+            "line_items": [named_line],
+            "refunds": [{"refund_line_items": [{"quantity": 1}]}],
+        }
+        sole_commands = shopify_order_update_commands(sole)
+        self.assertEqual([command["command"] for command in sole_commands], ["fulfill", "return_sale"])
+        self.assertEqual(sole_commands[1]["args"]["fulfillment_id"], "9:0:sku-serum-c")
+        sole_short = {
+            **sole,
+            "line_items": [{**named_line, "quantity": 2}],
+            "refunds": [{"refund_line_items": [{"quantity": 1}]}],
+        }
+        self.assertEqual(
+            [command["command"] for command in shopify_order_update_commands(sole_short)],
+            ["fulfill"],
+        )
+        two_skus = {
+            **paid,
+            "financial_status": "partially_refunded",
+            "line_items": [named_line, {**line, "sku": "sku-other", "id": 101}],
+            "refunds": [{"refund_line_items": [{"quantity": 1}]}],
+        }
+        self.assertEqual(
+            [command["command"] for command in shopify_order_update_commands(two_skus)],
+            ["fulfill", "fulfill"],
+        )
+        missed_id = {
+            **sole,
+            "refunds": [{"refund_line_items": [{"line_item_id": 404, "quantity": 1}]}],
+        }
+        self.assertEqual(
+            [command["command"] for command in shopify_order_update_commands(missed_id)],
+            ["fulfill"],
+        )
         ambiguous = {
             **paid,
             "financial_status": "partially_refunded",
@@ -2277,6 +2313,25 @@ class SettlementRouteTests(unittest.TestCase):
                 repeat = record_shopify_order_update({**paid, "financial_status": "refunded"})
                 self.assertTrue(repeat["ok"])
                 self.assertEqual(repeat["count"], 0)
+                sole_order = {
+                    "order_number": 21,
+                    "fulfillment_status": "fulfilled",
+                    "financial_status": "partially_refunded",
+                    "line_items": [line],
+                    "refunds": [{"refund_line_items": [{"quantity": 1}]}],
+                }
+                sole_recorded = record_shopify_order_update(sole_order)
+                self.assertTrue(sole_recorded["ok"], sole_recorded)
+                self.assertEqual(sole_recorded["count"], 2)
+                sole_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "21:0:sku-serum-c"', sole_text)
+                self.assertIn('"return_id": "return:21:0:sku-serum-c"', sole_text)
+                self.assertIn('"transfer_id": "to-cape-town"', sole_text)
+                self.assertNotIn("return:to-cape-town", sole_text)
+                sole_again = record_shopify_order_update(sole_order)
+                self.assertTrue(sole_again["ok"])
+                self.assertEqual(sole_again["count"], 0)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), sole_text)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
