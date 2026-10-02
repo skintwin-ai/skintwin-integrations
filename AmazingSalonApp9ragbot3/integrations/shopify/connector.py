@@ -215,9 +215,87 @@ def _saved_refund_lines(order) -> list:
     return lines
 
 
+def _stated_refund_id(value) -> bool:
+    if isinstance(value, bool) or value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def _refund_line_names_sale(line) -> bool:
+    """True when a refund line already names a sku or a line id."""
+    if not isinstance(line, dict):
+        return False
+    if _stated_refund_id(line.get("line_item_id")) or _sku_text(line):
+        return True
+    item = line.get("line_item")
+    return isinstance(item, dict) and (_stated_refund_id(item.get("id")) or bool(_sku_text(item)))
+
+
+def _merge_refund_identity(saved_line, request_line):
+    """Copy the sku and line id the request names onto a saved line that omits them.
+
+    The saved quantity stays. A saved line that already names a sale stays as written.
+    """
+    if not isinstance(saved_line, dict) or _refund_line_names_sale(saved_line):
+        return saved_line
+    if not isinstance(request_line, dict) or not _refund_line_names_sale(request_line):
+        return saved_line
+    merged = dict(saved_line)
+    if not _stated_refund_id(merged.get("line_item_id")) and _stated_refund_id(request_line.get("line_item_id")):
+        merged["line_item_id"] = request_line["line_item_id"]
+    requested_item = request_line.get("line_item") if isinstance(request_line.get("line_item"), dict) else None
+    item = dict(merged["line_item"]) if isinstance(merged.get("line_item"), dict) else {}
+    if requested_item is not None:
+        if not _stated_refund_id(item.get("id")) and _stated_refund_id(requested_item.get("id")):
+            item["id"] = requested_item["id"]
+        if not _sku_text(item) and _sku_text(requested_item):
+            item["sku"] = _sku_text(requested_item)
+    if not _sku_text(item) and _sku_text(request_line):
+        item["sku"] = _sku_text(request_line)
+    if item:
+        merged["line_item"] = item
+    if merged == saved_line:
+        return saved_line
+    return merged
+
+
+def _refunds_with_request_identity(saved, requested):
+    """Saved refund lines that omit a sku or line id gain the identity the request already named."""
+    request_lines = _saved_refund_lines(requested)
+    refunds = saved.get("refunds")
+    if not isinstance(refunds, list) or not request_lines:
+        return None
+    cursor = 0
+    changed = False
+    rebuilt = []
+    for refund in refunds:
+        if not isinstance(refund, dict):
+            rebuilt.append(refund)
+            continue
+        items = refund.get("refund_line_items")
+        if not isinstance(items, list):
+            rebuilt.append(refund)
+            continue
+        merged_items = []
+        for line in items:
+            request_line = request_lines[cursor] if cursor < len(request_lines) else None
+            cursor += 1
+            merged = _merge_refund_identity(line, request_line)
+            if merged is not line:
+                changed = True
+            merged_items.append(merged)
+        rebuilt.append({**refund, "refund_line_items": merged_items})
+    if not changed:
+        return None
+    return rebuilt
+
+
 def _saved_shopify_refunds(saved, requested):
     """A saved partial refund that omits its refund lines returns the sale the request already named.
 
+    A saved refund line that omits its sku or line id uses the identity the request already named, and keeps its quantity.
     A saved refund that names its own lines keeps those lines. An open saved order stays unchanged.
     """
     if not isinstance(saved, dict) or not isinstance(requested, dict):
@@ -232,12 +310,16 @@ def _saved_shopify_refunds(saved, requested):
     refunds = saved.get("refunds")
     if refunds is not None and not isinstance(refunds, list):
         return saved
-    if _saved_refund_lines(saved):
-        return saved
-    requested_refunds = requested.get("refunds")
-    if not isinstance(requested_refunds, list) or not requested_refunds:
-        return saved
-    stamped = {**saved, "refunds": list(requested_refunds)}
+    if not _saved_refund_lines(saved):
+        requested_refunds = requested.get("refunds")
+        if not isinstance(requested_refunds, list) or not requested_refunds:
+            return saved
+        stamped = {**saved, "refunds": list(requested_refunds)}
+    else:
+        enriched = _refunds_with_request_identity(saved, requested)
+        if not enriched:
+            return saved
+        stamped = {**saved, "refunds": enriched}
     try:
         named = stage.shopify_refunded_line_commands(stamped)
     except stage.StageRejection:

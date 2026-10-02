@@ -7432,7 +7432,7 @@ class SettlementRouteTests(unittest.TestCase):
                                         "lot_id": "lot-glycerin",
                                         "ingredient_id": "glycerin",
                                         "qualification_id": "qual-glycerin",
-                                        "milligrams": 10000,
+                                        "milligrams": 14000,
                                     },
                                 },
                                 {
@@ -7440,7 +7440,7 @@ class SettlementRouteTests(unittest.TestCase):
                                     "args": {
                                         "formula_id": "serum-c",
                                         "name": "Vitamin C serum",
-                                        "lines": [["glycerin", 10000]],
+                                        "lines": [["glycerin", 14000]],
                                     },
                                 },
                                 {
@@ -7457,7 +7457,7 @@ class SettlementRouteTests(unittest.TestCase):
                                         "batch_id": "batch-1",
                                         "sku_id": "sku-serum-c",
                                         "units": 1,
-                                        "allocations": [["glycerin", "lot-glycerin", 10000]],
+                                        "allocations": [["glycerin", "lot-glycerin", 14000]],
                                     },
                                 },
                                 {
@@ -7468,7 +7468,7 @@ class SettlementRouteTests(unittest.TestCase):
                                         "batch_id": "batch-1",
                                         "source": "plant",
                                         "destination": "cape-town",
-                                        "milligrams": 10000,
+                                        "milligrams": 14000,
                                     },
                                 },
                             ]
@@ -7497,6 +7497,74 @@ class SettlementRouteTests(unittest.TestCase):
                 again = connector.create_order(request(9))
                 self.assertEqual(again["order_number"], 9)
                 self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                connector.echoes[17] = {
+                    "order_number": 17,
+                    "fulfillment_status": "fulfilled",
+                    "financial_status": "partially_refunded",
+                    "line_items": [line],
+                    "refunds": [{"refund_line_items": [{"quantity": 1, "line_item": {}}]}],
+                }
+                named = connector.create_order(request(17))
+                self.assertEqual(named["order_number"], 17)
+                self.assertEqual(named["refunds"][0]["refund_line_items"][0]["line_item"], {})
+                named_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "17:0:sku-serum-c"', named_text)
+                self.assertIn('"return_id": "return:17:0:sku-serum-c"', named_text)
+                self.assertNotIn('"return_id": "return:xfer-cape-town"', named_text)
+                connector.echoes[18] = {
+                    "order_number": 18,
+                    "fulfillment_status": "fulfilled",
+                    "financial_status": "partially_refunded",
+                    "line_items": [{**line, "quantity": 2}],
+                    "refunds": [{"refund_line_items": [{"quantity": 1}]}],
+                }
+                kept_quantity = connector.create_order(
+                    request(
+                        18,
+                        line_items=[{**line, "quantity": 2}],
+                        refunds=[
+                            {
+                                "refund_line_items": [
+                                    {"quantity": 2, "line_item": {"sku": "sku-serum-c"}},
+                                ]
+                            }
+                        ],
+                    )
+                )
+                self.assertEqual(kept_quantity["order_number"], 18)
+                kept_quantity_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "18:0:sku-serum-c"', kept_quantity_text)
+                self.assertNotIn('"return_id": "return:18:0:sku-serum-c"', kept_quantity_text)
+                connector.echoes[19] = {
+                    "order_number": 19,
+                    "fulfillment_status": "fulfilled",
+                    "financial_status": "partially_refunded",
+                    "line_items": [line, {**line, "id": 101}],
+                    "refunds": [{"refund_line_items": [{"quantity": 1}]}],
+                }
+                chosen = connector.create_order(
+                    request(
+                        19,
+                        line_items=[line, {**line, "id": 101}],
+                        refunds=[
+                            {
+                                "refund_line_items": [
+                                    {
+                                        "quantity": 1,
+                                        "line_item_id": 101,
+                                        "line_item": {"id": 101, "sku": "sku-serum-c"},
+                                    }
+                                ]
+                            }
+                        ],
+                    )
+                )
+                self.assertEqual(chosen["order_number"], 19)
+                chosen_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "19:0:sku-serum-c"', chosen_text)
+                self.assertIn('"fulfillment_id": "19:1:sku-serum-c"', chosen_text)
+                self.assertIn('"return_id": "return:19:1:sku-serum-c"', chosen_text)
+                self.assertNotIn('"return_id": "return:19:0:sku-serum-c"', chosen_text)
                 connector.echoes[10] = {
                     "order_number": 10,
                     "fulfillment_status": "fulfilled",
