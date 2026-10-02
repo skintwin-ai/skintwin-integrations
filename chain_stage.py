@@ -236,6 +236,7 @@ def draft_order_commands(draft: dict) -> list[dict]:
         {
             "order_number": order_number,
             "line_items": draft.get("line_items") or [],
+            "note_attributes": draft.get("note_attributes") or [],
         }
     )
 
@@ -251,13 +252,14 @@ def shopify_fulfillment_commands(order: dict) -> list[dict]:
     if not isinstance(items, list):
         raise StageRejection("line_items must be a list")
     commands = []
+    defaults = _order_line_defaults(order)
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise StageRejection("each line item must be an object")
         sku = item.get("sku")
         if not isinstance(sku, str) or not sku.strip():
             continue
-        location, milligrams, kind, practitioner = _shopify_line(item)
+        location, milligrams, kind, practitioner = _shopify_line(item, defaults)
         if location is None and milligrams is None and kind is None:
             continue
         if not isinstance(location, str) or not location.strip() or milligrams is None:
@@ -345,7 +347,7 @@ def shopify_refunded_line_commands(order: dict) -> list[dict]:
             sku = line.get("sku")
             if not isinstance(sku, str) or not sku.strip():
                 continue
-            location, milligrams, _kind, _practitioner = _shopify_line(line)
+            location, milligrams, _kind, _practitioner = _shopify_line(line, _order_line_defaults(order))
             if location is None and milligrams is None:
                 continue
             if not isinstance(location, str) or not location.strip() or milligrams is None:
@@ -429,13 +431,14 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
     commands = []
     order_number = order.get("order_number") or order.get("name") or order.get("id")
     order_id = str(order_number) if order_number is not None else ""
+    defaults = _order_line_defaults(order)
     for index, item in enumerate(order.get("line_items") or []):
         if not isinstance(item, dict):
             continue
         sku = item.get("sku")
         if not isinstance(sku, str) or not sku.strip():
             continue
-        location, milligrams, _kind, _practitioner = _shopify_line(item)
+        location, milligrams, _kind, _practitioner = _shopify_line(item, defaults)
         if location is None and milligrams is None:
             continue
         quantity = item.get("quantity") or 1
@@ -712,26 +715,51 @@ def record_shopify_order_update(order: dict) -> dict | None:
     return _commit_idempotent(commands)
 
 
-def _shopify_line(item: dict) -> tuple[object, object, str | None, str | None]:
+_LINE_ATTRIBUTES = ("location", "milligrams", "kind", "practitioner_id")
+
+
+def _attribute_values(entries: object) -> dict:
+    found: dict[str, object] = {}
+    if not isinstance(entries, list):
+        return found
+    for prop in entries:
+        if not isinstance(prop, dict):
+            continue
+        name = str(prop.get("name") or "").strip().lower()
+        if name not in _LINE_ATTRIBUTES or name in found:
+            continue
+        found[name] = prop.get("value")
+    return found
+
+
+def _order_line_defaults(order: dict) -> dict:
+    """Order note attributes name the same line fields a property can name."""
+    return _attribute_values(order.get("note_attributes"))
+
+
+def _shopify_line(item: dict, defaults: dict | None = None) -> tuple[object, object, str | None, str | None]:
+    defaults = defaults or {}
     location = item.get("location")
     milligrams = item.get("milligrams")
     kind = None
     practitioner = item.get("practitioner_id")
-    properties = item.get("properties") or []
-    if isinstance(properties, list):
-        for prop in properties:
-            if not isinstance(prop, dict):
-                continue
-            name = str(prop.get("name") or "").lower()
-            value = prop.get("value")
-            if name == "location" and not location:
-                location = value
-            elif name == "milligrams" and milligrams is None:
-                milligrams = value
-            elif name == "kind" and isinstance(value, str):
-                kind = value.strip()
-            elif name == "practitioner_id" and not practitioner:
-                practitioner = value
+    for name, value in _attribute_values(item.get("properties")).items():
+        if name == "location" and not location:
+            location = value
+        elif name == "milligrams" and milligrams is None:
+            milligrams = value
+        elif name == "kind" and isinstance(value, str):
+            kind = value.strip()
+        elif name == "practitioner_id" and not practitioner:
+            practitioner = value
+    if not location and defaults.get("location"):
+        location = defaults["location"]
+    if milligrams is None and "milligrams" in defaults:
+        milligrams = defaults["milligrams"]
+    if kind is None and isinstance(defaults.get("kind"), str):
+        kind = defaults["kind"].strip()
+    if not practitioner and defaults.get("practitioner_id"):
+        practitioner = defaults["practitioner_id"]
     return location, milligrams, kind, practitioner if isinstance(practitioner, str) else None
 
 
