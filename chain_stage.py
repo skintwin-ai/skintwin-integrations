@@ -519,7 +519,7 @@ def record_opencart_catalog(product: dict) -> dict | None:
         commands = opencart_catalog_commands(product)
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}
-    return _commit_many(commands)
+    return _commit_idempotent(commands)
 
 
 def record_opencart_fulfillments(order: dict) -> dict | None:
@@ -547,7 +547,7 @@ def record_shopify_catalog(product: dict) -> dict | None:
         commands = shopify_catalog_commands(product)
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}
-    return _commit_many(commands)
+    return _commit_idempotent(commands)
 
 
 def record_shopify_fulfillments(order: dict) -> dict | None:
@@ -659,6 +659,8 @@ def _command_identity(command: dict) -> tuple[str, str] | None:
         return ("settle", str(args.get("settlement_id")))
     if name == "return_sale":
         return ("return_sale", str(args.get("return_id")))
+    if name == "catalog_sku":
+        return ("catalog_sku", str(args.get("sku_id")))
     return None
 
 
