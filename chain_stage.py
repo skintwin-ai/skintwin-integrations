@@ -74,7 +74,7 @@ def paystack_settlement(transaction: dict) -> dict | None:
     )
     if not fulfillment_id:
         return None
-    reference = data.get("reference") or data.get("id") or fulfillment_id
+    reference = _order_label(data, "reference", "id") or fulfillment_id
     settlement_id = (
         _named(metadata, "settlement_id", "settlementId")
         or _named(data, "settlement_id", "settlementId")
