@@ -277,10 +277,86 @@ def _shopify_returned(order: dict) -> bool:
     return status in _SHOPIFY_RETURNED
 
 
+def shopify_refunded_line_commands(order: dict) -> list[dict]:
+    """A fully refunded line of a shipped order returns that sale.
+
+    A refund quantity below the line quantity stays off the ledger.
+    """
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    items = order.get("line_items") or []
+    if not isinstance(items, list):
+        raise StageRejection("line_items must be a list")
+    indexes: dict[object, int] = {}
+    for index, item in enumerate(items):
+        if isinstance(item, dict) and item.get("id") is not None:
+            indexes[item.get("id")] = index
+    refunds = order.get("refunds") or []
+    if not isinstance(refunds, list):
+        raise StageRejection("refunds must be a list")
+    order_number = order.get("order_number") or order.get("name") or order.get("id")
+    order_id = _text(str(order_number) if order_number is not None else "", "order number")
+    returns = []
+    seen: set[str] = set()
+    for refund in refunds:
+        if not isinstance(refund, dict):
+            raise StageRejection("each refund must be an object")
+        lines = refund.get("refund_line_items") or []
+        if not isinstance(lines, list):
+            raise StageRejection("refund_line_items must be a list")
+        for refund_line in lines:
+            if not isinstance(refund_line, dict):
+                raise StageRejection("each refund line must be an object")
+            line = refund_line.get("line_item")
+            line_id = refund_line.get("line_item_id")
+            if not isinstance(line, dict):
+                line = next(
+                    (item for item in items if isinstance(item, dict) and item.get("id") == line_id),
+                    None,
+                )
+            if not isinstance(line, dict):
+                continue
+            index = indexes.get(line.get("id", line_id))
+            if index is None:
+                continue
+            refunded = refund_line.get("quantity")
+            sold = line.get("quantity") or 1
+            try:
+                refunded_qty = _quantity(refunded)
+                sold_qty = _quantity(sold)
+            except StageRejection:
+                continue
+            if refunded_qty != sold_qty:
+                continue
+            sku = line.get("sku")
+            if not isinstance(sku, str) or not sku.strip():
+                continue
+            location, milligrams, _kind, _practitioner = _shopify_line(line)
+            if location is None and milligrams is None:
+                continue
+            if not isinstance(location, str) or not location.strip() or milligrams is None:
+                raise StageRejection(f"sku {sku} requires location and milligrams")
+            fulfillment_id = f"{order_id}:{index}:{sku.strip()}"
+            if fulfillment_id in seen:
+                continue
+            seen.add(fulfillment_id)
+            returns.append(
+                {
+                    "command": "return_sale",
+                    "args": {
+                        "return_id": f"return:{fulfillment_id}",
+                        "fulfillment_id": fulfillment_id,
+                    },
+                }
+            )
+    return returns
+
+
 def shopify_order_update_commands(order: dict) -> list[dict]:
     """An order update records a sale only once Shopify says it shipped, paid, or came back.
 
-    An open update, a partial fulfillment, and a partial refund stay off the ledger.
+    An open update and a partial fulfillment stay off the ledger.
+    A refund quantity below the line quantity stays off the return.
     A paid order that is not fulfilled does not settle, because the sale is not on the ledger yet.
     """
     if not isinstance(order, dict):
@@ -294,6 +370,8 @@ def shopify_order_update_commands(order: dict) -> list[dict]:
     financial = str(order.get("financial_status") or "").strip().lower()
     if financial == "paid":
         commands.extend(shopify_settlement_commands(order))
+    elif financial == "partially_refunded":
+        commands.extend(shopify_refunded_line_commands(order))
     return commands
 
 
