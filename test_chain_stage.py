@@ -8607,6 +8607,251 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_connector_cancel_returns_the_movement_it_already_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationError = importlib.import_module("integrations.common.exceptions").IntegrationError
+                ShopifyB2BConnector = importlib.import_module(
+                    "integrations.shopify.connector"
+                ).ShopifyB2BConnector
+                WixBookingsConnector = importlib.import_module(
+                    "integrations.wix.connector"
+                ).WixBookingsConnector
+                OpenCartConnector = importlib.import_module(
+                    "integrations.opencart.connector"
+                ).OpenCartConnector
+
+                class _Shopify(ShopifyB2BConnector):
+                    def __init__(self):
+                        self.posted = []
+
+                    def post(self, endpoint, data=None):
+                        self.posted.append(endpoint)
+                        return {"order": {}}
+
+                class _Wix(WixBookingsConnector):
+                    def __init__(self):
+                        self.posted = []
+
+                    def post(self, endpoint, data=None):
+                        self.posted.append(endpoint)
+                        return {"booking": {}}
+
+                class _OpenCart(OpenCartConnector):
+                    def __init__(self):
+                        self.posted = []
+
+                    def update_order_history(self, order_id, order_status_id, comment="", notify=False):
+                        self.posted.append((order_id, order_status_id))
+                        return {"order_id": order_id}
+
+                shopify = _Shopify()
+                wix = _Wix()
+                opencart = _OpenCart()
+                self.assertEqual(shopify.cancel_order(9), {})
+                self.assertTrue(wix.cancel_appointment("book-1"))
+                self.assertTrue(opencart.cancel_appointment("4"))
+                self.assertEqual(shopify.posted, ["orders/9/cancel.json"])
+                self.assertEqual(wix.posted, ["/bookings/v2/bookings/book-1/cancel"])
+                self.assertEqual(opencart.posted, [(4, 7)])
+                self.assertFalse(ledger.exists())
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {
+                                        "ingredient_id": "glycerin",
+                                        "inci": "Glycerin",
+                                        "cas": "56-81-5",
+                                    },
+                                },
+                                {
+                                    "command": "qualify_supplier",
+                                    "args": {
+                                        "qualification_id": "qual-glycerin",
+                                        "supplier_name": "Inland Humectants",
+                                        "ingredient_id": "glycerin",
+                                    },
+                                },
+                                {
+                                    "command": "receive_lot",
+                                    "args": {
+                                        "lot_id": "lot-glycerin",
+                                        "ingredient_id": "glycerin",
+                                        "qualification_id": "qual-glycerin",
+                                        "milligrams": 12000,
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                        "lines": [["glycerin", 12000]],
+                                    },
+                                },
+                                {
+                                    "command": "catalog_sku",
+                                    "args": {
+                                        "sku_id": "sku-serum-c",
+                                        "formula_id": "serum-c",
+                                        "name": "Vitamin C serum",
+                                    },
+                                },
+                                {
+                                    "command": "manufacture",
+                                    "args": {
+                                        "batch_id": "batch-1",
+                                        "sku_id": "sku-serum-c",
+                                        "units": 1,
+                                        "allocations": [["glycerin", "lot-glycerin", 12000]],
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "xfer-cape-town",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 2000,
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "book-1:1",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 2000,
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "9:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "fulfill",
+                                    "args": {
+                                        "fulfillment_id": "4:0:sku-serum-c",
+                                        "sku_id": "sku-serum-c",
+                                        "location": "cape-town",
+                                        "milligrams": 2000,
+                                        "kind": "retail",
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "book-2:0",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 1000,
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "return:book-2:0",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "cape-town",
+                                        "destination": "plant",
+                                        "milligrams": 500,
+                                    },
+                                },
+                                {
+                                    "command": "transfer",
+                                    "args": {
+                                        "transfer_id": "cover:0",
+                                        "sku_id": "sku-serum-c",
+                                        "batch_id": "batch-1",
+                                        "source": "plant",
+                                        "destination": "cape-town",
+                                        "milligrams": 1500,
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                self.assertTrue(wix.cancel_appointment("book-1"))
+                self.assertEqual(shopify.cancel_order(9), {})
+                self.assertTrue(opencart.cancel_appointment("4"))
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"transfer_id": "return:book-1:1"', text)
+                self.assertIn('"return_id": "return:9:0:sku-serum-c"', text)
+                self.assertIn('"return_id": "return:4:0:sku-serum-c"', text)
+                self.assertIn('"transfer_id": "xfer-cape-town"', text)
+                self.assertNotIn("return:xfer-cape-town", text)
+                self.assertNotIn('"transfer_id": "return:cover:0"', text)
+                self.assertTrue(wix.cancel_appointment("book-1"))
+                self.assertEqual(shopify.cancel_order(9), {})
+                self.assertTrue(opencart.cancel_appointment("4"))
+                self.assertTrue(wix.cancel_appointment("book-19"))
+                self.assertEqual(shopify.cancel_order(19), {})
+                self.assertTrue(opencart.cancel_appointment("19"))
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                with self.assertRaises(IntegrationError):
+                    wix.cancel_appointment("book-2")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -66,8 +66,28 @@ def _record_shopify_draft(draft):
     return recorded
 
 
-def _record_shopify_return(order):
+def _order_names_itself(order) -> bool:
+    if not isinstance(order, dict):
+        return False
+    for key in ("order_number", "name", "id"):
+        value = order.get(key)
+        if isinstance(value, str):
+            if value.strip():
+                return True
+            continue
+        if value:
+            return True
+    return False
+
+
+def _record_shopify_return(order, order_id=None):
     """A cancelled order records the same return a webhook would record."""
+    if not isinstance(order, dict):
+        order = {}
+    else:
+        order = dict(order)
+    if order_id is not None and not _order_names_itself(order):
+        order["id"] = order_id
     recorded = _chain_stage().record_shopify_returns(order)
     _reject_ledger(recorded, "return")
     return recorded
@@ -401,9 +421,9 @@ class ShopifyB2BConnector(BaseConnector):
         """
         endpoint = f"orders/{order_id}/cancel.json"
         response = self.post(endpoint, {'reason': reason})
-        order = response.get('order', response)
-        _record_shopify_return(order)
-        return order
+        order = response.get('order', response) if isinstance(response, dict) else {}
+        _record_shopify_return(order, order_id)
+        return order if isinstance(order, dict) else response
     
     # ==================== Customer Operations ====================
     

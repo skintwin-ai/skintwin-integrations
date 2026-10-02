@@ -61,6 +61,16 @@ def _names_wix_delivery(appointment_data) -> bool:
     )
 
 
+def _record_wix_cancellation(booking_id):
+    """A cancelled booking returns the delivery that booking already recorded."""
+    booking = str(booking_id or "").strip()
+    if not booking:
+        return None
+    recorded = _chain_stage().record_wix_cancellation({"id": booking})
+    _reject_ledger(recorded, "booking")
+    return recorded
+
+
 def _record_named_wix_delivery(appointment_data, booking_id=None):
     """A booking that already names a delivery records the same transfer a webhook would."""
     if not _names_wix_delivery(appointment_data):
@@ -452,17 +462,17 @@ class WixBookingsConnector(BaseConnector):
             bool: True if cancellation was successful
         """
         try:
-            response = self.post(f"{self.ENDPOINTS['bookings']}/{appointment_id}/cancel", {
+            self.post(f"{self.ENDPOINTS['bookings']}/{appointment_id}/cancel", {
                 'participantNotification': {
                     'notifyParticipants': True
                 }
             })
-            
             logger.info(f"Cancelled Wix booking: {appointment_id}")
-            return True
         except Exception as e:
             logger.error(f"Failed to cancel Wix booking {appointment_id}: {e}")
             raise IntegrationError(f"Failed to cancel booking: {e}", platform=self.PLATFORM_NAME)
+        _record_wix_cancellation(appointment_id)
+        return True
     
     def confirm_appointment(self, appointment_id: str) -> Dict:
         """

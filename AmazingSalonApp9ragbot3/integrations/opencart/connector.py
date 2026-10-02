@@ -508,10 +508,11 @@ class OpenCartConnector(BaseConnector):
                 comment="Order cancelled via integration",
                 notify=True
             )
-            return True
         except Exception as e:
             logger.error(f"Failed to cancel OpenCart order {appointment_id}: {e}")
             return False
+        _record_named_opencart_sale({"order_id": appointment_id, "order_status_id": 7})
+        return True
     
     # ==================== Shipping Operations ====================
     
