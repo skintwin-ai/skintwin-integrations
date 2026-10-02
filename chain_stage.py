@@ -177,6 +177,16 @@ def formula_id_from_shopify(product: dict) -> str | None:
     direct = product.get("formulaId") or product.get("formula_id")
     if isinstance(direct, str) and direct.strip():
         return direct.strip()
+    metafields = product.get("metafields")
+    if isinstance(metafields, list):
+        for field in metafields:
+            if not isinstance(field, dict):
+                continue
+            if field.get("key") not in ("formula_id", "formulaId"):
+                continue
+            value = field.get("value")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     tags = product.get("tags")
     if isinstance(tags, str):
         tags = tags.split(",")
@@ -461,15 +471,16 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
 def opencart_catalog_commands(product: dict) -> list[dict]:
     if not isinstance(product, dict):
         return []
-    return shopify_catalog_commands(
-        {
-            "title": product.get("name") or product.get("title"),
-            "sku": product.get("sku") or product.get("model"),
-            "tags": product.get("tags") if product.get("tags") is not None else product.get("tag"),
-            "formula_id": product.get("formula_id") or product.get("formulaId"),
-            "variants": product.get("variants"),
-        }
-    )
+    mapped = {
+        "title": product.get("name") or product.get("title"),
+        "sku": product.get("sku") or product.get("model"),
+        "tags": product.get("tags") if product.get("tags") is not None else product.get("tag"),
+        "formula_id": product.get("formula_id") or product.get("formulaId"),
+        "variants": product.get("variants"),
+    }
+    if "metafields" in product:
+        mapped["metafields"] = product.get("metafields")
+    return shopify_catalog_commands(mapped)
 
 
 _OPENCART_SHIPPED = frozenset({"shipped", "complete", "completed", "delivered", "fulfilled"})
