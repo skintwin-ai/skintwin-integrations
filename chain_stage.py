@@ -400,21 +400,54 @@ def shopify_catalog_commands(product: dict) -> list[dict]:
     ]
 
 
+def _draft_payment_named(draft: dict) -> bool:
+    """A present financial status wins. paid is the payment when that status is absent."""
+    financial = str(draft.get("financial_status") or "").strip().lower()
+    if financial:
+        return financial == "paid"
+    return draft.get("paid") is True
+
+
+def _draft_settlements(order: dict, fulfillments: list[dict]) -> list[dict]:
+    """Settle a paid draft only when every drawn line names a price.
+
+    A missing or unusable price leaves the sale drawn and unsettled.
+    """
+    if not fulfillments:
+        return []
+    try:
+        settlements = shopify_settlement_commands(order)
+    except StageRejection:
+        return []
+    if len(settlements) != len(fulfillments):
+        return []
+    return settlements
+
+
 def draft_order_commands(draft: dict) -> list[dict]:
-    """A completed B2B draft is an outlet sale. Open and invoiced drafts are not."""
+    """A completed B2B draft is an outlet sale. Open and invoiced drafts are not.
+
+    A completed draft that names a payment settles that sale when every drawn line names a price.
+    A present financial status wins. A draft that does not name a price stays a sale.
+    """
     if not isinstance(draft, dict):
         raise StageRejection("draft order is required")
     status = str(draft.get("status") or "").strip().lower()
     if status != "completed":
         return []
     order_number = _order_label(draft, "order_id", "name", "id")
-    return shopify_fulfillment_commands(
-        {
-            "order_number": order_number,
-            "line_items": draft.get("line_items") or [],
-            "note_attributes": draft.get("note_attributes") or [],
-        }
-    )
+    order = {
+        "order_number": order_number,
+        "line_items": draft.get("line_items") or [],
+        "note_attributes": draft.get("note_attributes") or [],
+    }
+    currency = _currency_text(draft.get("currency"))
+    if currency:
+        order["currency"] = currency
+    commands = shopify_fulfillment_commands(order)
+    if _draft_payment_named(draft):
+        commands.extend(_draft_settlements(order, commands))
+    return commands
 
 
 def _sale_lines(order: dict) -> object:

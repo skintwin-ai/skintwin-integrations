@@ -27,6 +27,10 @@ from ..common.models import (
 
 logger = logging.getLogger(__name__)
 
+# Completing a draft without this argument still tells Shopify the payment is not pending.
+# The ledger settles only when the caller states False.
+_PAYMENT_PENDING_UNSET = object()
+
 
 def _chain_stage():
     import sys
@@ -691,6 +695,42 @@ def _draft_names_itself(draft) -> bool:
         if value:
             return True
     return False
+
+
+def _draft_names_a_priced_sale(draft) -> bool:
+    """True when every line this completed draft would draw also names a price."""
+    stage = _chain_stage()
+    if not isinstance(draft, dict):
+        return False
+    order = {
+        "order_number": stage._order_label(draft, "order_id", "name", "id") or "named",
+        "line_items": draft.get("line_items") or [],
+        "note_attributes": draft.get("note_attributes") or [],
+    }
+    try:
+        fulfillments = stage.shopify_fulfillment_commands(order)
+    except stage.StageRejection:
+        return False
+    return bool(stage._draft_settlements(order, fulfillments))
+
+
+def _completed_draft_payment(draft):
+    """A completed draft that omits its payment settles when this completion says it is paid.
+
+    A present financial status wins, including an explicit unpaid flag. A draft that does not
+    name a price stays a sale. An open draft is unchanged.
+    """
+    if not isinstance(draft, dict):
+        return draft
+    if str(draft.get("status") or "").strip().lower() != "completed":
+        return draft
+    if str(draft.get("financial_status") or "").strip():
+        return draft
+    if draft.get("paid") is True or draft.get("paid") is False:
+        return draft
+    if not _draft_names_a_priced_sale(draft):
+        return draft
+    return {**draft, "financial_status": "paid"}
 
 
 def _record_shopify_draft(draft):
@@ -1499,26 +1539,30 @@ class ShopifyB2BConnector(BaseConnector):
     def complete_draft_order(
         self,
         draft_order_id: int,
-        payment_pending: bool = False
+        payment_pending: Any = _PAYMENT_PENDING_UNSET
     ) -> Dict[str, Any]:
         """
         Complete a draft order (convert to order).
         
         Args:
             draft_order_id: Draft order ID
-            payment_pending: Whether payment is pending
+            payment_pending: Whether payment is pending. Omit it and Shopify is told the
+                payment is not pending, while the ledger settles only when the caller
+                states False and the completed draft names a price.
             
         Returns:
             Dict: Completed order data
         """
+        pending = False if payment_pending is _PAYMENT_PENDING_UNSET else bool(payment_pending)
         endpoint = f"draft_orders/{draft_order_id}/complete.json"
-        response = self.put(endpoint, {'payment_pending': payment_pending})
+        response = self.put(endpoint, {'payment_pending': pending})
         draft = response.get('draft_order', response) if isinstance(response, dict) else {}
         if isinstance(draft, dict) and not _draft_names_itself(draft):
             draft = dict(draft)
             if draft_order_id is not None:
                 draft["id"] = draft_order_id
-        _record_shopify_draft(draft)
+        recorded = _completed_draft_payment(draft) if payment_pending is False else draft
+        _record_shopify_draft(recorded)
         return draft
     
     # ==================== Webhook Operations ====================

@@ -1583,6 +1583,39 @@ class SettlementRouteTests(unittest.TestCase):
         self.assertEqual(commands[0]["args"]["fulfillment_id"], "9:0:sku-serum-c")
         self.assertEqual(commands[0]["args"]["milligrams"], 2000)
         self.assertEqual(commands[0]["args"]["location"], "cape-town")
+        priced = {
+            "status": "completed",
+            "id": 3,
+            "order_id": 9,
+            "line_items": [{**line, "price": "20.00"}],
+        }
+        self.assertEqual(len(draft_order_commands(priced)), 1)
+        paid = {**priced, "financial_status": "paid"}
+        paid_commands = draft_order_commands(paid)
+        self.assertEqual(paid_commands[1]["command"], "settle")
+        self.assertEqual(paid_commands[1]["args"]["settlement_id"], "pay-9:0:sku-serum-c")
+        self.assertEqual(paid_commands[1]["args"]["amount_cents"], 2000)
+        self.assertEqual(paid_commands[1]["args"]["currency"], "USD")
+        self.assertEqual(len(draft_order_commands({**priced, "financial_status": "pending"})), 1)
+        self.assertEqual(len(draft_order_commands({**priced, "paid": False})), 1)
+        self.assertEqual(
+            len(draft_order_commands({**paid, "line_items": [{**line, "price": "lots"}]})),
+            1,
+        )
+        self.assertEqual(
+            len(
+                draft_order_commands(
+                    {
+                        "status": "completed",
+                        "id": 3,
+                        "order_id": 9,
+                        "financial_status": "paid",
+                        "line_items": [line],
+                    }
+                )
+            ),
+            1,
+        )
         with tempfile.TemporaryDirectory() as tmp:
             ledger = Path(tmp) / "supply-chain.jsonl"
             previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
@@ -9591,7 +9624,7 @@ class SettlementRouteTests(unittest.TestCase):
                                         "lot_id": "lot-glycerin",
                                         "ingredient_id": "glycerin",
                                         "qualification_id": "qual-glycerin",
-                                        "milligrams": 5000,
+                                        "milligrams": 11000,
                                     },
                                 },
                                 {
@@ -9599,7 +9632,7 @@ class SettlementRouteTests(unittest.TestCase):
                                     "args": {
                                         "formula_id": "serum-c",
                                         "name": "Vitamin C serum",
-                                        "lines": [["glycerin", 5000]],
+                                        "lines": [["glycerin", 11000]],
                                     },
                                 },
                                 {
@@ -9616,7 +9649,7 @@ class SettlementRouteTests(unittest.TestCase):
                                         "batch_id": "batch-1",
                                         "sku_id": "sku-serum-c",
                                         "units": 1,
-                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                        "allocations": [["glycerin", "lot-glycerin", 11000]],
                                     },
                                 },
                                 {
@@ -9627,7 +9660,7 @@ class SettlementRouteTests(unittest.TestCase):
                                         "batch_id": "batch-1",
                                         "source": "plant",
                                         "destination": "cape-town",
-                                        "milligrams": 5000,
+                                        "milligrams": 11000,
                                     },
                                 },
                             ]
@@ -9646,6 +9679,7 @@ class SettlementRouteTests(unittest.TestCase):
                 text = ledger.read_text(encoding="utf-8")
                 self.assertIn('"fulfillment_id": "9:0:sku-serum-c"', text)
                 self.assertIn('"milligrams": 2000', text)
+                self.assertNotIn('"settlement_id": "pay-9:', text)
                 again = connector.complete_draft_order(3)
                 self.assertEqual(again["status"], "completed")
                 self.assertEqual(len(connector.completed), 4)
@@ -9666,6 +9700,96 @@ class SettlementRouteTests(unittest.TestCase):
                     connector.complete_draft_order(3)
                 self.assertEqual(len(connector.completed), 5)
                 self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                priced = {
+                    "sku": "sku-serum-c",
+                    "price": "20.00",
+                    "properties": [
+                        {"name": "location", "value": "cape-town"},
+                        {"name": "milligrams", "value": "2000"},
+                    ],
+                }
+                connector.response = {
+                    "status": "completed",
+                    "id": 3,
+                    "order_id": 10,
+                    "line_items": [priced],
+                }
+                paid = connector.complete_draft_order(3, payment_pending=False)
+                self.assertIsNone(paid.get("financial_status"))
+                self.assertEqual(len(connector.completed), 6)
+                settled = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "10:0:sku-serum-c"', settled)
+                self.assertIn('"settlement_id": "pay-10:0:sku-serum-c"', settled)
+                self.assertIn('"amount_cents": 2000', settled)
+                self.assertIn('"currency": "USD"', settled)
+                paid_again = connector.complete_draft_order(3, payment_pending=False)
+                self.assertIsNone(paid_again.get("financial_status"))
+                self.assertEqual(len(connector.completed), 7)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), settled)
+                connector.response = {
+                    "status": "completed",
+                    "id": 3,
+                    "order_id": 11,
+                    "line_items": [priced],
+                }
+                pending_payment = connector.complete_draft_order(3, payment_pending=True)
+                self.assertIsNone(pending_payment.get("financial_status"))
+                self.assertEqual(len(connector.completed), 8)
+                held = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "11:0:sku-serum-c"', held)
+                self.assertNotIn('"settlement_id": "pay-11:', held)
+                connector.response = {
+                    "status": "completed",
+                    "id": 3,
+                    "order_id": 12,
+                    "financial_status": "pending",
+                    "line_items": [priced],
+                }
+                stated_pending = connector.complete_draft_order(3, payment_pending=False)
+                self.assertEqual(stated_pending.get("financial_status"), "pending")
+                self.assertEqual(len(connector.completed), 9)
+                pending_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "12:0:sku-serum-c"', pending_text)
+                self.assertNotIn('"settlement_id": "pay-12:', pending_text)
+                connector.response = {
+                    "status": "completed",
+                    "id": 3,
+                    "order_id": 13,
+                    "financial_status": "paid",
+                    "line_items": [priced],
+                }
+                echo_paid = connector.complete_draft_order(3)
+                self.assertEqual(echo_paid.get("financial_status"), "paid")
+                self.assertEqual(len(connector.completed), 10)
+                echo_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "13:0:sku-serum-c"', echo_text)
+                self.assertIn('"settlement_id": "pay-13:0:sku-serum-c"', echo_text)
+                echo_again = connector.complete_draft_order(3)
+                self.assertEqual(echo_again.get("financial_status"), "paid")
+                self.assertEqual(len(connector.completed), 11)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echo_text)
+                short = {
+                    "sku": "sku-serum-c",
+                    "price": "20.00",
+                    "properties": [
+                        {"name": "location", "value": "cape-town"},
+                        {"name": "milligrams", "value": "1000"},
+                    ],
+                }
+                connector.response = {
+                    "status": "completed",
+                    "id": 3,
+                    "order_id": 14,
+                    "paid": False,
+                    "line_items": [short],
+                }
+                unpaid = connector.complete_draft_order(3, payment_pending=False)
+                self.assertIs(unpaid.get("paid"), False)
+                self.assertIsNone(unpaid.get("financial_status"))
+                self.assertEqual(len(connector.completed), 12)
+                unpaid_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "14:0:sku-serum-c"', unpaid_text)
+                self.assertNotIn('"settlement_id": "pay-14:', unpaid_text)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
