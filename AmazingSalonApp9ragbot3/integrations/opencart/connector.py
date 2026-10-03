@@ -309,7 +309,7 @@ def _opencart_saved_lines(saved, requested):
 
 
 def _record_saved_opencart_order(saved, order_id, requested=None):
-    """A saved cancellation that omits its id returns the sale recorded for the order being created.
+    """A saved sale or cancellation that omits its id returns the sale recorded for the order being created.
 
     A saved shipment that omits its products draws the products the request already named.
     A saved order that names itself keeps that id. An open saved order is recorded unchanged.
@@ -318,10 +318,13 @@ def _record_saved_opencart_order(saved, order_id, requested=None):
         return None
     payload = dict(saved)
     _copy_opencart_status_id(payload)
+    stage = _chain_stage()
+    status = stage._opencart_status(payload)
+    shipped = payload.get("fulfilled") is True or status in stage._OPENCART_SHIPPED
     if (
         order_id is not None
         and _opencart_order_label(payload) is None
-        and _chain_stage()._opencart_returned(payload)
+        and (stage._opencart_returned(payload) or shipped)
     ):
         payload["order_id"] = order_id
     if requested is not None:

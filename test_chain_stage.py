@@ -8487,6 +8487,70 @@ class SettlementRouteTests(unittest.TestCase):
                 noted_text = ledger.read_text(encoding="utf-8")
                 self.assertIn('"fulfillment_id": "29:0:sku-serum-c"', noted_text)
                 self.assertIn('"milligrams": 2000', noted_text)
+                connector.echoes[30] = {"fulfillment_status": "fulfilled"}
+                omitted = connector.create_order({"order_number": 30, "line_items": [line]})
+                self.assertEqual(omitted.get("fulfillment_status"), "fulfilled")
+                self.assertNotIn("order_number", omitted)
+                self.assertNotIn("line_items", omitted)
+                omitted_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "30:0:sku-serum-c"', omitted_text)
+                self.assertIn('"location": "cape-town"', omitted_text)
+                self.assertIn('"milligrams": 2000', omitted_text)
+                self.assertNotIn('"settlement_id": "pay-30:0:sku-serum-c"', omitted_text)
+                again_omitted = connector.create_order({"order_number": 30, "line_items": [line]})
+                self.assertEqual(again_omitted.get("fulfillment_status"), "fulfilled")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), omitted_text)
+                connector.echoes[40] = {"order_number": 41, "fulfillment_status": "fulfilled"}
+                kept_number = connector.create_order({"order_number": 40, "line_items": [line]})
+                self.assertEqual(kept_number.get("order_number"), 41)
+                kept_number_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "41:0:sku-serum-c"', kept_number_text)
+                self.assertNotIn('"fulfillment_id": "40:0:sku-serum-c"', kept_number_text)
+                connector.echoes[36] = {
+                    "fulfillment_status": "fulfilled",
+                    "financial_status": "paid",
+                }
+                paid_omitted = connector.create_order(
+                    {"order_number": 36, "line_items": [{**line, "price": "20.00"}]}
+                )
+                self.assertIsNone(paid_omitted.get("order_number"))
+                self.assertEqual(paid_omitted.get("financial_status"), "paid")
+                paid_omitted_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "36:0:sku-serum-c"', paid_omitted_text)
+                self.assertIn('"settlement_id": "pay-36:0:sku-serum-c"', paid_omitted_text)
+                self.assertIn('"amount_cents": 2000', paid_omitted_text)
+                connector.echoes[39] = {
+                    "fulfillment_status": "fulfilled",
+                    "financial_status": "paid",
+                }
+                before_unpriced_id = ledger.read_text(encoding="utf-8")
+                with self.assertRaises(IntegrationError) as unpriced_id:
+                    connector.create_order({"order_number": 39, "line_items": [line]})
+                self.assertIn("amount", str(unpriced_id.exception))
+                self.assertEqual(ledger.read_text(encoding="utf-8"), before_unpriced_id)
+                self.assertNotIn('"fulfillment_id": "39:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
+                connector.echoes[None] = {"fulfillment_status": "fulfilled", "line_items": [line]}
+                with self.assertRaises(IntegrationError) as missing_id:
+                    connector.create_order({"line_items": [line]})
+                self.assertIn("order number", str(missing_id.exception))
+                self.assertEqual(ledger.read_text(encoding="utf-8"), before_unpriced_id)
+                connector.echoes[37] = {}
+                opened_blank = connector.create_order({"order_number": 37, "line_items": [line]})
+                self.assertEqual(opened_blank, {})
+                self.assertEqual(ledger.read_text(encoding="utf-8"), before_unpriced_id)
+                self.assertNotIn('"fulfillment_id": "37:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
+                connector.echoes[38] = {"fulfillment_status": "fulfilled"}
+                updated_blank = connector.update_order(38, {"order_number": 38, "line_items": [line]})
+                self.assertEqual(updated_blank.get("fulfillment_status"), "fulfilled")
+                self.assertNotIn("order_number", updated_blank)
+                updated_blank_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "38:0:sku-serum-c"', updated_blank_text)
+                connector.echoes[50] = {"name": "#1042", "fulfillment_status": "fulfilled"}
+                named_echo = connector.create_order({"order_number": 50, "line_items": [line]})
+                self.assertEqual(named_echo.get("name"), "#1042")
+                named_echo_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "#1042:0:sku-serum-c"', named_echo_text)
+                self.assertNotIn('"fulfillment_id": "50:0:sku-serum-c"', named_echo_text)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
@@ -11029,14 +11093,48 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertNotIn("return:24", ledger.read_text(encoding="utf-8"))
                 connector.responses.append({"status": "shipped"})
                 before_blank = list(connector.calls)
-                with self.assertRaises(IntegrationError) as blank:
-                    connector.create_appointment(
-                        {"order_id": 30, "status": "pending", "products": [line]}
-                    )
-                self.assertIn("order number", str(blank.exception))
+                blank = connector.create_appointment(
+                    {"order_id": 30, "status": "pending", "products": [line]}
+                )
+                self.assertEqual(blank.get("status"), "shipped")
+                self.assertNotIn("order_id", blank)
+                self.assertNotIn("products", blank)
                 self.assertEqual(connector.calls, before_blank + ["customer", "order"])
-                self.assertEqual(ledger.read_text(encoding="utf-8"), before_kept)
-                self.assertNotIn('"fulfillment_id": "30:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
+                blank_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "30:0:sku-serum-c"', blank_text)
+                self.assertIn('"location": "cape-town"', blank_text)
+                self.assertIn('"milligrams": 2000', blank_text)
+                self.assertNotIn('"settlement_id": "pay-30:0:sku-serum-c"', blank_text)
+                connector.responses.append({"status": "shipped"})
+                again_blank = connector.create_appointment(
+                    {"order_id": 30, "status": "pending", "products": [line]}
+                )
+                self.assertEqual(again_blank.get("status"), "shipped")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), blank_text)
+                connector.responses.append({"status": "shipped", "products": [line]})
+                with self.assertRaises(IntegrationError) as unnamed:
+                    connector.create_appointment({"status": "pending", "products": [line]})
+                self.assertIn("order number", str(unnamed.exception))
+                self.assertEqual(ledger.read_text(encoding="utf-8"), blank_text)
+                connector.responses.append({"order_id": 40, "status": "shipped"})
+                kept_id = connector.create_appointment(
+                    {"order_id": 39, "status": "pending", "products": [line]}
+                )
+                self.assertEqual(kept_id.get("order_id"), 40)
+                kept_id_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "40:0:sku-serum-c"', kept_id_text)
+                self.assertNotIn('"fulfillment_id": "39:0:sku-serum-c"', kept_id_text)
+                connector.responses.append({"status": "complete"})
+                paid_blank = connector.create_appointment(
+                    {"order_id": 41, "status": "pending", "products": [line]}
+                )
+                self.assertEqual(paid_blank.get("status"), "complete")
+                self.assertNotIn("order_id", paid_blank)
+                paid_blank_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "41:0:sku-serum-c"', paid_blank_text)
+                self.assertIn('"settlement_id": "pay-41:0:sku-serum-c"', paid_blank_text)
+                self.assertIn('"amount_cents": 18500', paid_blank_text)
+                self.assertIn('"currency": "USD"', paid_blank_text)
                 connector.history.append({"order_status_id": 3})
                 updated = connector.update_appointment(
                     "25",
@@ -13989,7 +14087,7 @@ class SettlementRouteTests(unittest.TestCase):
                     connector.create_appointment(
                         {"order_id": 5, "items": [{"product_id": 5, "quantity": 1}]}
                     )
-                self.assertIn("order number", str(shipped.exception))
+                self.assertIn("already exists", str(shipped.exception))
                 self.assertNotIn("johannesburg", ledger.read_text(encoding="utf-8"))
                 self.assertEqual(ledger.read_text(encoding="utf-8"), status_text)
                 connector.responses.append({"status": "canceled"})
@@ -15070,6 +15168,20 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertEqual(connector.posted, before_changed_refund)
                 self.assertEqual(ledger.read_text(encoding="utf-8"), updated_refund_text)
                 self.assertNotIn("johannesburg", ledger.read_text(encoding="utf-8"))
+                connector.responses.append({"fulfillment_status": "fulfilled"})
+                omitted_appointment = connector.create_appointment(
+                    {"order_number": 46, "items": [line]}
+                )
+                self.assertEqual(omitted_appointment.get("fulfillment_status"), "fulfilled")
+                self.assertNotIn("id", omitted_appointment)
+                self.assertNotIn("line_items", omitted_appointment)
+                omitted_appointment_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "46:0:sku-serum-c"', omitted_appointment_text)
+                self.assertIn('"milligrams": 2000', omitted_appointment_text)
+                self.assertIn('"location": "cape-town"', omitted_appointment_text)
+                connector.responses.append({"fulfillment_status": "fulfilled"})
+                connector.create_appointment({"order_number": 46, "items": [line]})
+                self.assertEqual(ledger.read_text(encoding="utf-8"), omitted_appointment_text)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)

@@ -291,6 +291,7 @@ def _record_saved_appointment_lines(saved, appointment_data, mapped):
     """A saved fulfilled order that omits its lines draws the sale the appointment already named.
 
     The mapper posts a pending order and drops that sale, including a partial refund.
+    A saved sale that omits its id records the id the appointment already named.
     An appointment that is itself fulfilled was already recorded. An open saved order stays unchanged.
     """
     if not isinstance(saved, dict) or not isinstance(appointment_data, dict):
@@ -299,7 +300,11 @@ def _record_saved_appointment_lines(saved, appointment_data, mapped):
         return None
     if str(appointment_data.get("fulfillment_status") or "").strip().lower() == "fulfilled":
         return None
-    stamped = _saved_shopify_fulfilled_lines(saved, appointment_data)
+    known = _stated_order_id(appointment_data)
+    if known is None:
+        known = _stated_order_id(mapped)
+    identified = _saved_shopify_order(saved, known)
+    stamped = _saved_shopify_fulfilled_lines(identified, appointment_data)
     refunded = _saved_shopify_refunds(stamped, appointment_data)
     if refunded is saved:
         return None
@@ -323,18 +328,18 @@ def _stated_order_id(order):
 
 
 def _saved_shopify_order(saved, order_id):
-    """A saved cancellation that omits its id returns the sale recorded for the id being saved.
+    """A saved sale or cancellation that omits its id returns the sale recorded for the id being saved.
 
     A saved order that names itself keeps that id. An open saved order is recorded unchanged.
     """
     if not isinstance(saved, dict) or order_id is None or _order_names_itself(saved):
         return saved
-    restocked = str(saved.get("fulfillment_status") or "").strip().lower() == "restocked"
+    fulfillment = str(saved.get("fulfillment_status") or "").strip().lower()
     financial = str(saved.get("financial_status") or "").strip().lower()
-    returned = restocked or bool(
+    returned = fulfillment == "restocked" or bool(
         saved.get("cancelled_at") or saved.get("cancel_reason") or financial in {"refunded", "voided"}
     )
-    if not returned:
+    if not returned and fulfillment != "fulfilled":
         return saved
     return {**saved, "id": order_id}
 
@@ -1616,6 +1621,8 @@ class ShopifyB2BConnector(BaseConnector):
         """
         _record_shopify_order(appointment_data)
         order_data = self._map_appointment_to_order(appointment_data)
+        if _stated_order_id(order_data) is None and appointment_id not in (None, ""):
+            order_data = {**order_data, "id": appointment_id}
         saved = self.update_order(int(appointment_id), order_data)
         _record_saved_appointment_lines(saved, appointment_data, order_data)
         return saved
