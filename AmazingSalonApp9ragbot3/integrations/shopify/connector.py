@@ -202,6 +202,43 @@ def _stamp_omitted_variant_formulas(saved, requested):
     return stamped
 
 
+def _catalog_name_field(product):
+    """The title a product already states. A blank title falls through to its name."""
+    if not isinstance(product, dict):
+        return None
+    for key in ("title", "name"):
+        value = product.get(key)
+        if isinstance(value, str) and value.strip():
+            return key, value.strip()
+    return None
+
+
+def _product_names_a_formula(product):
+    """True when the product or one of its variants already names a formula."""
+    stage = _chain_stage()
+    if stage.formula_id_from_shopify(product) is not None:
+        return True
+    variants = product.get("variants") if isinstance(product, dict) and isinstance(product.get("variants"), list) else []
+    return any(isinstance(variant, dict) and stage.formula_id_from_shopify(variant) for variant in variants)
+
+
+def _stamp_omitted_catalog_name(saved, requested):
+    """A saved product that names a formula and omits its title takes the title the request named.
+
+    A present title wins. A blank title falls through to the product name. A product with no formula
+    stays unchanged. A variant title is not the product name.
+    """
+    if not isinstance(saved, dict) or _catalog_name_field(saved) is not None:
+        return saved
+    if not _product_names_a_formula(saved):
+        return saved
+    named = _catalog_name_field(requested)
+    if named is None:
+        return saved
+    key, value = named
+    return {**saved, key: value}
+
+
 def _saved_shopify_product(saved, requested):
     """A saved product that names a formula and omits skus catalogs the sku the request already named.
 
@@ -210,16 +247,22 @@ def _saved_shopify_product(saved, requested):
     A saved variant that names a formula and omits its sku catalogs the sku the request named for that variant.
     A saved variant that omits its sku, while another variant already names one, takes the request sku at that index.
     A saved variant that names a sku and omits its formula catalogs the formula the request named for that variant.
+    A saved product that names a formula and omits its title catalogs the title the request named.
     A product with no formula is recorded unchanged.
     """
     if not isinstance(saved, dict) or not isinstance(requested, dict):
         return saved
+    return _stamp_omitted_catalog_name(_saved_shopify_catalog_fields(saved, requested), requested)
+
+
+def _saved_shopify_catalog_fields(saved, requested):
+    """Copy skus and formulas a saved product omits. The title is applied by the caller."""
     if _chain_stage().formula_id_from_shopify(saved) is None:
         variants = _saved_variant_formulas(saved, requested)
         base = saved if variants is None else {**saved, "variants": variants}
         formulas = _stamp_omitted_variant_formulas(base, requested)
         if formulas is None:
-            return saved if variants is None else base
+            return base
         return {**base, "variants": formulas}
     if _variant_sku_rows(saved):
         variants = _stamp_omitted_catalog_skus(saved, requested)

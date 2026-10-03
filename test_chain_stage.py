@@ -7769,6 +7769,217 @@ class SettlementRouteTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
 
+    def test_a_saved_product_that_omits_its_title_catalogs_the_request_title(self) -> None:
+        kept = {"sku": "sku-title-kept"}
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            previous_hub = os.environ.get("SKINTWIN_HUB_ROOT")
+            script = _locate_script()
+            self.assertIsNotNone(script)
+            hub = script.parents[1]
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = str(hub)
+            try:
+                import importlib
+                import types
+
+                root = Path(__file__).resolve().parent / "AmazingSalonApp9ragbot3" / "integrations"
+                current = sys.modules.get("integrations")
+                if current is None or not getattr(current, "__path__", None):
+                    package = types.ModuleType("integrations")
+                    package.__path__ = [str(root)]
+                    package.__package__ = "integrations"
+                    sys.modules["integrations"] = package
+                for name in (
+                    "integrations.common",
+                    "integrations.wix",
+                    "integrations.opencart",
+                    "integrations.shopify",
+                ):
+                    loaded = sys.modules.get(name)
+                    if loaded is not None and getattr(loaded, "__file__", None) is None:
+                        del sys.modules[name]
+                IntegrationError = importlib.import_module("integrations.common.exceptions").IntegrationError
+                shopify = importlib.import_module("integrations.shopify.connector")
+                ShopifyB2BConnector = shopify.ShopifyB2BConnector
+
+                class _Catalog(ShopifyB2BConnector):
+                    def __init__(self):
+                        self.sent = []
+                        self.echoes = {}
+                        self.ENDPOINTS = {
+                            "products": "products.json",
+                            "product": "products/{id}.json",
+                        }
+
+                    def _saved(self, data):
+                        title = data["product"].get("title")
+                        if title in self.echoes:
+                            return {"product": self.echoes[title]}
+                        return {"product": data["product"]}
+
+                    def post(self, endpoint, data):
+                        self.sent.append(("post", data["product"].get("title")))
+                        return self._saved(data)
+
+                    def put(self, endpoint, data):
+                        self.sent.append(("put", data["product"].get("title")))
+                        return self._saved(data)
+
+                connector = _Catalog()
+                named = {"title": "Kept title", "tags": "formula:cleanser", "variants": [kept]}
+                self.assertIs(shopify._saved_shopify_product(named, {"title": "Other title"}), named)
+                retail = {"tags": "retail", "variants": [kept]}
+                self.assertIs(
+                    shopify._saved_shopify_product(retail, {"title": "Retail title", "variants": [kept]}),
+                    retail,
+                )
+                variant_title = {"tags": "formula:cleanser", "variants": [kept]}
+                self.assertIs(
+                    shopify._saved_shopify_product(
+                        variant_title,
+                        {"variants": [{"title": "50 ml", "sku": "sku-title-kept"}]},
+                    ),
+                    variant_title,
+                )
+                seeded = subprocess.run(
+                    [sys.executable, "-m", "domain.ledger"],
+                    cwd=hub,
+                    input=json.dumps(
+                        {
+                            "commands": [
+                                {
+                                    "command": "specify_ingredient",
+                                    "args": {
+                                        "ingredient_id": "glycerin",
+                                        "inci": "Glycerin",
+                                        "cas": "56-81-5",
+                                    },
+                                },
+                                {
+                                    "command": "define_formula",
+                                    "args": {
+                                        "formula_id": "cleanser",
+                                        "name": "Gentle cleanser",
+                                        "lines": [["glycerin", 8000]],
+                                    },
+                                },
+                            ]
+                        }
+                    ),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=os.environ.copy(),
+                )
+                self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
+                connector.echoes["Named cleanser"] = {
+                    "tags": "formula:cleanser",
+                    "variants": [kept],
+                }
+                created = connector.create_product(
+                    {"title": "Named cleanser", "tags": "retail", "variants": [kept]}
+                )
+                self.assertNotIn("title", created)
+                named_lines = [
+                    json.loads(line)
+                    for line in ledger.read_text(encoding="utf-8").splitlines()
+                    if '"sku_id": "sku-title-kept"' in line
+                ]
+                self.assertEqual(len(named_lines), 1)
+                self.assertEqual(named_lines[0]["args"]["name"], "Named cleanser")
+                self.assertEqual(named_lines[0]["args"]["formula_id"], "cleanser")
+                again = connector.create_product(
+                    {"title": "Named cleanser", "tags": "retail", "variants": [kept]}
+                )
+                self.assertNotIn("title", again)
+                self.assertEqual(ledger.read_text(encoding="utf-8").count('"sku_id": "sku-title-kept"'), 1)
+                connector.echoes["  "] = {
+                    "tags": "formula:cleanser",
+                    "variants": [{"sku": "sku-shelf-name"}],
+                }
+                shelf = connector.create_product(
+                    {"title": "  ", "name": "Shelf name", "tags": "retail", "variants": [{"sku": "sku-shelf-name"}]}
+                )
+                self.assertNotIn("name", shelf)
+                shelf_lines = [
+                    json.loads(line)
+                    for line in ledger.read_text(encoding="utf-8").splitlines()
+                    if '"sku_id": "sku-shelf-name"' in line
+                ]
+                self.assertEqual(len(shelf_lines), 1)
+                self.assertEqual(shelf_lines[0]["args"]["name"], "Shelf name")
+                connector.echoes["Request title"] = {
+                    "title": "Echo title",
+                    "tags": "formula:cleanser",
+                    "variants": [{"sku": "sku-echo-title"}],
+                }
+                echoed = connector.create_product(
+                    {"title": "Request title", "tags": "retail", "variants": [{"sku": "sku-echo-title"}]}
+                )
+                self.assertEqual(echoed["title"], "Echo title")
+                echo_lines = [
+                    json.loads(line)
+                    for line in ledger.read_text(encoding="utf-8").splitlines()
+                    if '"sku_id": "sku-echo-title"' in line
+                ]
+                self.assertEqual(len(echo_lines), 1)
+                self.assertEqual(echo_lines[0]["args"]["name"], "Echo title")
+                self.assertNotIn("Request title", ledger.read_text(encoding="utf-8"))
+                connector.echoes["Variant formula title"] = {
+                    "tags": "retail",
+                    "variants": [{"sku": "sku-variant-title", "formulaId": "cleanser"}],
+                }
+                variant = connector.create_product(
+                    {"title": "Variant formula title", "tags": "retail", "variants": [{}]}
+                )
+                self.assertNotIn("title", variant)
+                variant_lines = [
+                    json.loads(line)
+                    for line in ledger.read_text(encoding="utf-8").splitlines()
+                    if '"sku_id": "sku-variant-title"' in line
+                ]
+                self.assertEqual(len(variant_lines), 1)
+                self.assertEqual(variant_lines[0]["args"]["name"], "Variant formula title")
+                before_missing = ledger.read_text(encoding="utf-8")
+                connector.echoes["Missing title formula"] = {
+                    "tags": "formula:absent",
+                    "variants": [{"sku": "sku-missing-title"}],
+                }
+                with self.assertRaises(IntegrationError):
+                    connector.create_product(
+                        {"title": "Missing title formula", "tags": "retail", "variants": [{"sku": "sku-missing-title"}]}
+                    )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), before_missing)
+                self.assertNotIn("sku-missing-title", ledger.read_text(encoding="utf-8"))
+                connector.echoes["Update title"] = {
+                    "tags": "formula:cleanser",
+                    "variants": [{"sku": "sku-update-title"}],
+                }
+                updated = connector.update_product(
+                    13,
+                    {"title": "Update title", "tags": "retail", "variants": [{"sku": "sku-update-title"}]},
+                )
+                self.assertNotIn("title", updated)
+                self.assertIn(("put", "Update title"), connector.sent)
+                update_lines = [
+                    json.loads(line)
+                    for line in ledger.read_text(encoding="utf-8").splitlines()
+                    if '"sku_id": "sku-update-title"' in line
+                ]
+                self.assertEqual(len(update_lines), 1)
+                self.assertEqual(update_lines[0]["args"]["name"], "Update title")
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
+                if previous_hub is None:
+                    os.environ.pop("SKINTWIN_HUB_ROOT", None)
+                else:
+                    os.environ["SKINTWIN_HUB_ROOT"] = previous_hub
+
     def test_a_created_shopify_order_records_the_named_sale_once(self) -> None:
         sale = {
             "order_number": 9,
