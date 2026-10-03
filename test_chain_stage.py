@@ -9168,6 +9168,19 @@ class SettlementRouteTests(unittest.TestCase):
                 omitted_lines_text = ledger.read_text(encoding="utf-8")
                 self.assertIn('"fulfillment_id": "28:0:sku-serum-c"', omitted_lines_text)
                 self.assertIn('"return_id": "return:28:0:sku-serum-c"', omitted_lines_text)
+                stated = {
+                    "order_number": 29,
+                    "fulfillment_status": "fulfilled",
+                    "line_items": [line],
+                    "refunds": [full_refund],
+                }
+                stated_return = connector.create_order(stated)
+                self.assertIsNone(stated_return.get("financial_status"))
+                self.assertEqual(stated_return["order_number"], 29)
+                stated_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "29:0:sku-serum-c"', stated_text)
+                self.assertIn('"return_id": "return:29:0:sku-serum-c"', stated_text)
+                self.assertNotIn("financial_status", stated)
                 connector.echoes[9] = {
                     "order_number": 9,
                     "fulfillment_status": "fulfilled",
@@ -9180,7 +9193,7 @@ class SettlementRouteTests(unittest.TestCase):
                         request(9, line_items=[{**line, "location": "johannesburg"}]),
                     )
                 self.assertEqual(connector.sent, before_omitted_change + [("put", 9)])
-                self.assertEqual(ledger.read_text(encoding="utf-8"), omitted_lines_text)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), stated_text)
                 self.assertNotIn("johannesburg", ledger.read_text(encoding="utf-8"))
             finally:
                 if previous_ledger is None:
@@ -13456,9 +13469,19 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertNotIn("return:to-cape-town", text)
                 again = record_shopify_order_update(order)
                 self.assertEqual(again, {"ok": True, "count": 0})
+                omitted_status = {**order, "order_number": 19}
+                omitted_status.pop("financial_status")
+                omitted_return = record_shopify_order_update(omitted_status)
+                self.assertEqual(omitted_return, {"ok": True, "count": 1})
+                omitted_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"return_id": "return:19:0:sku-serum-c"', omitted_text)
+                self.assertNotIn("financial_status", omitted_status)
+                pending = {**order, "order_number": 4, "financial_status": "pending"}
+                self.assertIsNone(record_shopify_order_update(pending))
+                self.assertNotIn('"return_id": "return:4:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
                 other = {**order, "order_number": 8}
                 self.assertIsNone(record_shopify_order_update(other))
-                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), omitted_text)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)

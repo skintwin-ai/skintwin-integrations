@@ -734,12 +734,27 @@ def shopify_refunded_line_commands(order: dict) -> list[dict]:
     return returns
 
 
+def _shopify_names_refund_lines(order: dict) -> bool:
+    """True when the order already names refund lines. A present financial status wins elsewhere."""
+    refunds = order.get("refunds")
+    if not isinstance(refunds, list):
+        return False
+    for refund in refunds:
+        if not isinstance(refund, dict):
+            continue
+        lines = refund.get("refund_line_items")
+        if isinstance(lines, list) and lines:
+            return True
+    return False
+
+
 def shopify_order_update_commands(order: dict) -> list[dict]:
     """An order update records a sale only once Shopify says it shipped, paid, or came back.
 
     An open update and a partial fulfillment stay off the ledger.
     A refund quantity below the line quantity stays off the return.
     A paid order that is not fulfilled does not settle, because the sale is not on the ledger yet.
+    A present financial status wins. Refund lines count when that status is omitted.
     """
     if not isinstance(order, dict):
         raise StageRejection("order is required")
@@ -752,7 +767,7 @@ def shopify_order_update_commands(order: dict) -> list[dict]:
     financial = str(order.get("financial_status") or "").strip().lower()
     if financial == "paid":
         commands.extend(shopify_settlement_commands(order))
-    elif financial == "partially_refunded":
+    elif financial == "partially_refunded" or (not financial and _shopify_names_refund_lines(order)):
         commands.extend(shopify_refunded_line_commands(order))
     return commands
 
