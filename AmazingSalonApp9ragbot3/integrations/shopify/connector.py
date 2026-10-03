@@ -81,16 +81,68 @@ def _variant_sku_rows(product):
     return rows
 
 
+def _variant_formula(variant):
+    """The formula a variant already names. A variant without one has none."""
+    if not isinstance(variant, dict):
+        return None
+    return _chain_stage().formula_id_from_shopify(variant)
+
+
+def _saved_variant_formulas(saved, requested):
+    """Saved variants that name a formula and omit a sku take the sku the request already named.
+
+    A saved variant that names its own sku keeps that sku. A variant with no formula stays unchanged.
+    A request variant that names a different formula does not lend its sku.
+    A product sku fills the only formula variant that omitted its sku when the request names no variant sku.
+    """
+    saved_variants = saved.get("variants")
+    if not isinstance(saved_variants, list) or not saved_variants:
+        return None
+    requested_variants = requested.get("variants") if isinstance(requested.get("variants"), list) else []
+    gaps = [
+        variant
+        for variant in saved_variants
+        if isinstance(variant, dict) and not _sku_text(variant) and _variant_formula(variant)
+    ]
+    product_sku = _sku_text(requested) if len(gaps) == 1 and not _variant_sku_rows(requested) else ""
+    stamped = []
+    changed = False
+    for index, variant in enumerate(saved_variants):
+        if not isinstance(variant, dict) or _sku_text(variant) or not _variant_formula(variant):
+            stamped.append(variant)
+            continue
+        request_variant = requested_variants[index] if index < len(requested_variants) else None
+        if _variant_formula(request_variant) and _variant_formula(request_variant) != _variant_formula(variant):
+            stamped.append(variant)
+            continue
+        sku = _sku_text(request_variant) if isinstance(request_variant, dict) else ""
+        if not sku:
+            sku = product_sku
+        if not sku:
+            stamped.append(variant)
+            continue
+        stamped.append({**variant, "sku": sku})
+        changed = True
+    if not changed:
+        return None
+    return stamped
+
+
 def _saved_shopify_product(saved, requested):
     """A saved product that names a formula and omits skus catalogs the sku the request already named.
 
     Variant skus win. A product sku is the same named sku when the request has no variant sku.
-    A saved product that names its own sku keeps that sku. A product with no formula is recorded unchanged.
+    A saved product that names its own sku keeps that sku.
+    A saved variant that names a formula and omits its sku catalogs the sku the request named for that variant.
+    A product with no formula is recorded unchanged.
     """
     if not isinstance(saved, dict) or not isinstance(requested, dict):
         return saved
     if _chain_stage().formula_id_from_shopify(saved) is None:
-        return saved
+        variants = _saved_variant_formulas(saved, requested)
+        if variants is None:
+            return saved
+        return {**saved, "variants": variants}
     if _variant_sku_rows(saved) or _sku_text(saved):
         return saved
     named = _variant_sku_rows(requested)

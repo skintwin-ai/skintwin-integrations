@@ -7135,6 +7135,138 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertEqual(connector.sent, before_switch + [("put", "Switch cleanser")])
                 self.assertEqual(ledger.read_text(encoding="utf-8"), updated_text)
                 self.assertEqual(updated_text.count('"sku_id": "sku-bare"'), 1)
+                connector.echoes["Variant formula"] = {
+                    "title": "Variant formula",
+                    "variants": [{"metafields": [{"key": "formula_id", "value": " cleanser "}]}],
+                }
+                variant = connector.create_product(
+                    {"title": "Variant formula", "variants": [{"sku": "sku-variant-formula"}]}
+                )
+                self.assertNotIn("sku", variant["variants"][0])
+                variant_text = ledger.read_text(encoding="utf-8")
+                self.assertEqual(variant_text.count('"sku_id": "sku-variant-formula"'), 1)
+                self.assertNotIn('"sku_id": "Variant formula"', variant_text)
+                variant_again = connector.create_product(
+                    {"title": "Variant formula", "variants": [{"sku": "sku-variant-formula"}]}
+                )
+                self.assertEqual(variant_again["title"], "Variant formula")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), variant_text)
+                connector.echoes["Kept variant"] = {
+                    "title": "Kept variant",
+                    "variants": [
+                        {
+                            "sku": "sku-kept-variant",
+                            "metafields": [{"key": "formula_id", "value": "cleanser"}],
+                        }
+                    ],
+                }
+                kept_variant = connector.create_product(
+                    {"title": "Kept variant", "variants": [{"sku": "sku-request-variant"}]}
+                )
+                self.assertEqual(kept_variant["variants"][0]["sku"], "sku-kept-variant")
+                kept_variant_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"sku_id": "sku-kept-variant"', kept_variant_text)
+                self.assertNotIn("sku-request-variant", kept_variant_text)
+                connector.echoes["Two formulas"] = {
+                    "title": "Two formulas",
+                    "variants": [
+                        {"metafields": [{"key": "formula_id", "value": "cleanser"}]},
+                        {"metafields": [{"key": "formula_id", "value": "serum-c"}]},
+                    ],
+                }
+                connector.create_product(
+                    {
+                        "title": "Two formulas",
+                        "variants": [{"sku": "sku-two-cleanser"}, {"sku": "sku-two-serum"}],
+                    }
+                )
+                two_text = ledger.read_text(encoding="utf-8")
+                self.assertEqual(two_text.count('"sku_id": "sku-two-cleanser"'), 1)
+                self.assertEqual(two_text.count('"sku_id": "sku-two-serum"'), 1)
+                self.assertNotIn('"sku_id": "Two formulas"', two_text)
+                connector.create_product(
+                    {
+                        "title": "Two formulas",
+                        "variants": [{"sku": "sku-two-cleanser"}, {"sku": "sku-two-serum"}],
+                    }
+                )
+                self.assertEqual(ledger.read_text(encoding="utf-8"), two_text)
+                connector.echoes["Shifted"] = {
+                    "title": "Shifted",
+                    "variants": [
+                        {"metafields": [{"key": "formula_id", "value": "cleanser"}]},
+                        {
+                            "sku": "sku-shift-kept",
+                            "metafields": [{"key": "formula_id", "value": "serum-c"}],
+                        },
+                    ],
+                }
+                connector.create_product(
+                    {"title": "Shifted", "variants": [{"sku": " "}, {"sku": "sku-shift-request"}]}
+                )
+                shifted_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"sku_id": "sku-shift-kept"', shifted_text)
+                self.assertNotIn("sku-shift-request", shifted_text)
+                self.assertNotIn('"sku_id": "Shifted"', shifted_text)
+                connector.echoes["Only variant"] = {
+                    "title": "Only variant",
+                    "variants": [
+                        {"sku": " ", "metafields": [{"key": "formula_id", "value": "cleanser"}]}
+                    ],
+                }
+                connector.create_product({"title": "Only variant", "sku": "sku-only-variant"})
+                only_text = ledger.read_text(encoding="utf-8")
+                self.assertEqual(only_text.count('"sku_id": "sku-only-variant"'), 1)
+                self.assertNotIn('"sku_id": "Only variant"', only_text)
+                connector.echoes["Split formula"] = {
+                    "title": "Split formula",
+                    "variants": [{"metafields": [{"key": "formula_id", "value": "serum-c"}]}],
+                }
+                connector.create_product(
+                    {
+                        "title": "Split formula",
+                        "variants": [{"sku": "sku-split", "formula_id": "cleanser"}],
+                    }
+                )
+                split_lines = [
+                    json.loads(line)
+                    for line in ledger.read_text(encoding="utf-8").splitlines()
+                    if '"sku_id": "sku-split"' in line
+                ]
+                self.assertEqual(len(split_lines), 1)
+                self.assertEqual(split_lines[0]["args"]["formula_id"], "cleanser")
+                connector.echoes["Update variant"] = {
+                    "title": "Update variant",
+                    "variants": [{"metafields": [{"key": "formulaId", "value": "cleanser"}]}],
+                }
+                connector.update_product(
+                    11, {"title": "Update variant", "variants": [{"sku": "sku-update-variant"}]}
+                )
+                self.assertIn(("put", "Update variant"), connector.sent)
+                update_variant_text = ledger.read_text(encoding="utf-8")
+                self.assertEqual(update_variant_text.count('"sku_id": "sku-update-variant"'), 1)
+                self.assertNotIn('"sku_id": "Update variant"', update_variant_text)
+                connector.echoes["Plain variant"] = {
+                    "title": "Plain variant",
+                    "variants": [{"title": "50 ml"}],
+                }
+                connector.create_product(
+                    {"title": "Plain variant", "variants": [{"sku": "sku-plain-variant"}]}
+                )
+                self.assertNotIn("sku-plain-variant", ledger.read_text(encoding="utf-8"))
+                connector.echoes["Dropped formula"] = {"title": "Dropped formula", "variants": [{}]}
+                connector.create_product(
+                    {
+                        "title": "Dropped formula",
+                        "variants": [
+                            {
+                                "sku": "sku-dropped",
+                                "metafields": [{"key": "formula_id", "value": "cleanser"}],
+                            }
+                        ],
+                    }
+                )
+                self.assertEqual(ledger.read_text(encoding="utf-8").count('"sku_id": "sku-dropped"'), 1)
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
