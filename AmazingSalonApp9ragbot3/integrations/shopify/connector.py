@@ -292,6 +292,7 @@ def _record_saved_appointment_lines(saved, appointment_data, mapped):
 
     The mapper posts a pending order and drops that sale, including a partial refund.
     A saved sale that omits its id records the id the appointment already named.
+    A saved sale that omits its payment status settles when the appointment already says paid.
     An appointment that is itself fulfilled was already recorded. An open saved order stays unchanged.
     """
     if not isinstance(saved, dict) or not isinstance(appointment_data, dict):
@@ -305,7 +306,8 @@ def _record_saved_appointment_lines(saved, appointment_data, mapped):
         known = _stated_order_id(mapped)
     identified = _saved_shopify_order(saved, known)
     stamped = _saved_shopify_fulfilled_lines(identified, appointment_data)
-    refunded = _saved_shopify_refunds(stamped, appointment_data)
+    paid = _saved_shopify_payment(stamped, appointment_data)
+    refunded = _saved_shopify_refunds(paid, appointment_data)
     if refunded is saved:
         return None
     return _record_shopify_order(refunded)
@@ -342,6 +344,24 @@ def _saved_shopify_order(saved, order_id):
     if not returned and fulfillment != "fulfilled":
         return saved
     return {**saved, "id": order_id}
+
+
+def _saved_shopify_payment(saved, requested):
+    """A saved fulfilled order that omits its payment status settles when the request already says paid.
+
+    A present financial status wins. An open or returned saved order is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    if str(saved.get("fulfillment_status") or "").strip().lower() != "fulfilled":
+        return saved
+    if _chain_stage()._shopify_returned(saved):
+        return saved
+    if str(saved.get("financial_status") or "").strip():
+        return saved
+    if str(requested.get("financial_status") or "").strip().lower() != "paid":
+        return saved
+    return {**saved, "financial_status": "paid"}
 
 
 def _order_names_a_sale(order):
@@ -1077,6 +1097,7 @@ class ShopifyB2BConnector(BaseConnector):
         if saved is not order_data:
             recorded = _saved_shopify_order(saved, _stated_order_id(order_data))
             recorded = _saved_shopify_fulfilled_lines(recorded, order_data)
+            recorded = _saved_shopify_payment(recorded, order_data)
             _record_shopify_order(_saved_shopify_refunds(recorded, order_data))
         return saved
     
@@ -1098,6 +1119,7 @@ class ShopifyB2BConnector(BaseConnector):
         if saved is not order_data:
             recorded = _saved_shopify_order(saved, order_id)
             recorded = _saved_shopify_fulfilled_lines(recorded, order_data)
+            recorded = _saved_shopify_payment(recorded, order_data)
             _record_shopify_order(_saved_shopify_refunds(recorded, order_data))
         return saved
     
