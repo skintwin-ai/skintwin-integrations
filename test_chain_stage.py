@@ -7020,6 +7020,47 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertEqual(titled["title"], "Title cleanser")
                 titled_text = ledger.read_text(encoding="utf-8")
                 self.assertIn('"sku_id": "Title cleanser"', titled_text)
+                connector.echoes["Product sku"] = {"title": "Product sku", "tags": "formula:cleanser"}
+                product_sku = connector.create_product(
+                    {"title": "Product sku", "sku": "sku-product", "tags": "retail"}
+                )
+                self.assertEqual(product_sku.get("tags"), "formula:cleanser")
+                self.assertNotIn("sku", product_sku)
+                product_text = ledger.read_text(encoding="utf-8")
+                self.assertEqual(product_text.count('"sku_id": "sku-product"'), 1)
+                self.assertNotIn('"sku_id": "Product sku"', product_text)
+                again_product = connector.create_product(
+                    {"title": "Product sku", "sku": "sku-product", "tags": "retail"}
+                )
+                self.assertEqual(again_product.get("title"), "Product sku")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), product_text)
+                connector.echoes["Formula sku"] = {"title": "Formula sku", "tags": "formula:cleanser"}
+                formula_sku = connector.create_product(
+                    {
+                        "title": "Formula sku",
+                        "sku": "sku-formula",
+                        "tags": "formula:cleanser",
+                    }
+                )
+                formula_text = ledger.read_text(encoding="utf-8")
+                self.assertEqual(formula_text.count('"sku_id": "sku-formula"'), 1)
+                self.assertNotIn('"sku_id": "Formula sku"', formula_text)
+                connector.echoes["Camel sku"] = {
+                    "title": "Camel sku",
+                    "tags": "formula:cleanser",
+                    "variants": [{"sku": " "}],
+                }
+                camel = connector.create_product({"title": "Camel sku", "skuId": "sku-camel"})
+                self.assertEqual(camel["variants"], [{"sku": " "}])
+                camel_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"sku_id": "sku-camel"', camel_text)
+                self.assertNotIn('"sku_id": "Camel sku"', camel_text)
+                connector.echoes["Retail product"] = {"title": "Retail product", "tags": "retail"}
+                retail_product = connector.create_product(
+                    {"title": "Retail product", "sku": "sku-retail-product"}
+                )
+                self.assertEqual(retail_product.get("tags"), "retail")
+                self.assertNotIn("sku-retail-product", ledger.read_text(encoding="utf-8"))
                 connector.echoes["Named cleanser"] = {"title": "Named cleanser", "tags": "formula:cleanser"}
                 named = connector.create_product(
                     {

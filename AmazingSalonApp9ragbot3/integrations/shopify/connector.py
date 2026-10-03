@@ -82,8 +82,9 @@ def _variant_sku_rows(product):
 
 
 def _saved_shopify_product(saved, requested):
-    """A saved product that names a formula and omits variant skus catalogs the skus the request already named.
+    """A saved product that names a formula and omits skus catalogs the sku the request already named.
 
+    Variant skus win. A product sku is the same named sku when the request has no variant sku.
     A saved product that names its own sku keeps that sku. A product with no formula is recorded unchanged.
     """
     if not isinstance(saved, dict) or not isinstance(requested, dict):
@@ -93,9 +94,12 @@ def _saved_shopify_product(saved, requested):
     if _variant_sku_rows(saved) or _sku_text(saved):
         return saved
     named = _variant_sku_rows(requested)
-    if not named:
+    if named:
+        return {**saved, "variants": list(named)}
+    sku = _sku_text(requested)
+    if not sku:
         return saved
-    return {**saved, "variants": list(named)}
+    return {**saved, "sku": sku}
 
 
 def _record_shopify_order(order):
