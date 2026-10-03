@@ -787,6 +787,43 @@ def _draft_names_a_sale(draft):
         return None
 
 
+def _draft_request_paid(draft) -> bool:
+    """True when the request already says this draft is paid."""
+    if not isinstance(draft, dict):
+        return False
+    return _chain_stage()._draft_payment_named(draft)
+
+
+def _saved_shopify_draft_payment(saved, requested):
+    """A completed draft that omits its payment settles when the request already says paid.
+
+    A present financial status wins, including pending. An explicit unpaid flag wins.
+    A draft that does not name a price stays a sale. An open draft is unchanged.
+    A payment already recorded at a different amount stays that amount.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    if str(saved.get("status") or "").strip().lower() != "completed":
+        return saved
+    if str(saved.get("financial_status") or "").strip():
+        return saved
+    if saved.get("paid") is True or saved.get("paid") is False:
+        return saved
+    if not _draft_request_paid(requested):
+        return saved
+    stamped = {**saved, "financial_status": "paid"}
+    stage = _chain_stage()
+    try:
+        commands = stage.draft_order_commands(stamped)
+    except stage.StageRejection:
+        return saved
+    if not any(command.get("command") == "settle" for command in commands):
+        return saved
+    if stage._unrecorded(commands) is None:
+        return saved
+    return stamped
+
+
 def _saved_shopify_draft_lines(saved, requested):
     """A completed draft that omits its sale lines draws the lines the request already named.
 
@@ -1501,7 +1538,8 @@ class ShopifyB2BConnector(BaseConnector):
         saved = response.get('draft_order', response)
         if saved is not draft_order_data:
             recorded = _saved_shopify_draft(saved, draft_order_data)
-            _record_shopify_draft(_saved_shopify_draft_lines(recorded, draft_order_data))
+            recorded = _saved_shopify_draft_lines(recorded, draft_order_data)
+            _record_shopify_draft(_saved_shopify_draft_payment(recorded, draft_order_data))
         return saved
     
     def send_draft_order_invoice(

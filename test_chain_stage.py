@@ -9898,6 +9898,126 @@ class SettlementRouteTests(unittest.TestCase):
                                     }
                                 ],
                             },
+                            15: {
+                                "status": "completed",
+                                "id": 15,
+                                "order_id": 15,
+                                "line_items": [
+                                    {
+                                        "sku": "sku-serum-c",
+                                        "properties": [
+                                            {"name": "location", "value": "cape-town"},
+                                            {"name": "milligrams", "value": "2000"},
+                                        ],
+                                    }
+                                ],
+                            },
+                            16: {
+                                "status": "completed",
+                                "id": 16,
+                                "order_id": 16,
+                                "financial_status": "pending",
+                                "line_items": [
+                                    {
+                                        "sku": "sku-serum-c",
+                                        "price": "20.00",
+                                        "properties": [
+                                            {"name": "location", "value": "cape-town"},
+                                            {"name": "milligrams", "value": "2000"},
+                                        ],
+                                    }
+                                ],
+                            },
+                            17: {
+                                "status": "completed",
+                                "id": 17,
+                                "order_id": 17,
+                                "line_items": [
+                                    {
+                                        "sku": "sku-serum-c",
+                                        "price": "20.00",
+                                        "properties": [
+                                            {"name": "location", "value": "cape-town"},
+                                            {"name": "milligrams", "value": "2000"},
+                                        ],
+                                    }
+                                ],
+                            },
+                            18: {
+                                "status": "completed",
+                                "id": 18,
+                                "order_id": 18,
+                                "paid": False,
+                                "line_items": [
+                                    {
+                                        "sku": "sku-serum-c",
+                                        "price": "20.00",
+                                        "properties": [
+                                            {"name": "location", "value": "cape-town"},
+                                            {"name": "milligrams", "value": "2000"},
+                                        ],
+                                    }
+                                ],
+                            },
+                            19: {
+                                "status": "completed",
+                                "id": 19,
+                                "order_id": 19,
+                                "line_items": [
+                                    {
+                                        "sku": "sku-serum-c",
+                                        "price": "20.00",
+                                        "properties": [
+                                            {"name": "location", "value": "cape-town"},
+                                            {"name": "milligrams", "value": "2000"},
+                                        ],
+                                    }
+                                ],
+                            },
+                            20: {
+                                "status": "completed",
+                                "id": 20,
+                                "order_id": 20,
+                                "line_items": [
+                                    {
+                                        "sku": "sku-serum-c",
+                                        "properties": [
+                                            {"name": "location", "value": "cape-town"},
+                                            {"name": "milligrams", "value": "2000"},
+                                        ],
+                                    }
+                                ],
+                            },
+                            21: {
+                                "status": "completed",
+                                "id": 21,
+                                "order_id": 21,
+                                "line_items": [
+                                    {
+                                        "sku": "sku-serum-c",
+                                        "price": "30.00",
+                                        "properties": [
+                                            {"name": "location", "value": "cape-town"},
+                                            {"name": "milligrams", "value": "2000"},
+                                        ],
+                                    }
+                                ],
+                            },
+                            22: {
+                                "status": "completed",
+                                "id": 22,
+                                "order_id": 22,
+                                "line_items": [
+                                    {
+                                        "sku": "sku-serum-c",
+                                        "price": "20.00",
+                                        "properties": [
+                                            {"name": "location", "value": "cape-town"},
+                                            {"name": "milligrams", "value": "2000"},
+                                        ],
+                                    }
+                                ],
+                            },
                         }
                         if body.get("id") in echoes:
                             return {"draft_order": echoes[body.get("id")]}
@@ -9957,7 +10077,7 @@ class SettlementRouteTests(unittest.TestCase):
                                         "lot_id": "lot-glycerin",
                                         "ingredient_id": "glycerin",
                                         "qualification_id": "qual-glycerin",
-                                        "milligrams": 5000,
+                                        "milligrams": 20000,
                                     },
                                 },
                                 {
@@ -9981,8 +10101,8 @@ class SettlementRouteTests(unittest.TestCase):
                                     "args": {
                                         "batch_id": "batch-1",
                                         "sku_id": "sku-serum-c",
-                                        "units": 1,
-                                        "allocations": [["glycerin", "lot-glycerin", 5000]],
+                                        "units": 4,
+                                        "allocations": [["glycerin", "lot-glycerin", 20000]],
                                     },
                                 },
                                 {
@@ -9993,7 +10113,7 @@ class SettlementRouteTests(unittest.TestCase):
                                         "batch_id": "batch-1",
                                         "source": "plant",
                                         "destination": "cape-town",
-                                        "milligrams": 5000,
+                                        "milligrams": 20000,
                                     },
                                 },
                             ]
@@ -10064,6 +10184,153 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertEqual(connector.posted[-1], "open")
                 self.assertEqual(ledger.read_text(encoding="utf-8"), echoed_text)
                 self.assertNotIn("johannesburg", ledger.read_text(encoding="utf-8"))
+                priced = {
+                    "sku": "sku-serum-c",
+                    "price": "20.00",
+                    "properties": [
+                        {"name": "location", "value": "cape-town"},
+                        {"name": "milligrams", "value": "2000"},
+                    ],
+                }
+                unpriced = {
+                    "sku": "sku-serum-c",
+                    "properties": [
+                        {"name": "location", "value": "cape-town"},
+                        {"name": "milligrams", "value": "2000"},
+                    ],
+                }
+                paid_echo = connector.create_draft_order(
+                    {
+                        "status": "open",
+                        "id": 15,
+                        "order_id": 15,
+                        "financial_status": "paid",
+                        "line_items": [priced],
+                    }
+                )
+                self.assertEqual(paid_echo["status"], "completed")
+                self.assertIsNone(paid_echo.get("financial_status"))
+                self.assertNotIn("price", paid_echo["line_items"][0])
+                paid_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "15:0:sku-serum-c"', paid_text)
+                self.assertIn('"settlement_id": "pay-15:0:sku-serum-c"', paid_text)
+                self.assertIn('"amount_cents": 2000', paid_text)
+                self.assertIn('"currency": "USD"', paid_text)
+                paid_again = connector.create_draft_order(
+                    {
+                        "status": "open",
+                        "id": 15,
+                        "order_id": 15,
+                        "financial_status": "paid",
+                        "line_items": [priced],
+                    }
+                )
+                self.assertIsNone(paid_again.get("financial_status"))
+                self.assertEqual(ledger.read_text(encoding="utf-8"), paid_text)
+                pending_echo = connector.create_draft_order(
+                    {
+                        "status": "open",
+                        "id": 16,
+                        "financial_status": "paid",
+                        "line_items": [priced],
+                    }
+                )
+                self.assertEqual(pending_echo.get("financial_status"), "pending")
+                pending_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "16:0:sku-serum-c"', pending_text)
+                self.assertNotIn('"settlement_id": "pay-16:', pending_text)
+                request_pending = connector.create_draft_order(
+                    {
+                        "status": "open",
+                        "id": 17,
+                        "financial_status": "pending",
+                        "line_items": [priced],
+                    }
+                )
+                self.assertIsNone(request_pending.get("financial_status"))
+                request_pending_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "17:0:sku-serum-c"', request_pending_text)
+                self.assertNotIn('"settlement_id": "pay-17:', request_pending_text)
+                unpaid_echo = connector.create_draft_order(
+                    {
+                        "status": "open",
+                        "id": 18,
+                        "financial_status": "paid",
+                        "line_items": [priced],
+                    }
+                )
+                self.assertIs(unpaid_echo.get("paid"), False)
+                self.assertIsNone(unpaid_echo.get("financial_status"))
+                unpaid_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "18:0:sku-serum-c"', unpaid_text)
+                self.assertNotIn('"settlement_id": "pay-18:', unpaid_text)
+                unpaid_request = connector.create_draft_order(
+                    {
+                        "status": "open",
+                        "id": 19,
+                        "paid": False,
+                        "line_items": [priced],
+                    }
+                )
+                self.assertIsNone(unpaid_request.get("financial_status"))
+                unpaid_request_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "19:0:sku-serum-c"', unpaid_request_text)
+                self.assertNotIn('"settlement_id": "pay-19:', unpaid_request_text)
+                missing_price = connector.create_draft_order(
+                    {
+                        "status": "open",
+                        "id": 20,
+                        "financial_status": "paid",
+                        "line_items": [unpriced],
+                    }
+                )
+                self.assertIsNone(missing_price.get("financial_status"))
+                missing_price_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "20:0:sku-serum-c"', missing_price_text)
+                self.assertNotIn('"settlement_id": "pay-20:', missing_price_text)
+                kept_amount = connector.create_draft_order(
+                    {
+                        "status": "completed",
+                        "id": 21,
+                        "order_id": 21,
+                        "financial_status": "paid",
+                        "line_items": [priced],
+                    }
+                )
+                self.assertEqual(kept_amount["line_items"][0].get("price"), "30.00")
+                self.assertIsNone(kept_amount.get("financial_status"))
+                kept_amount_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "21:0:sku-serum-c"', kept_amount_text)
+                self.assertIn('"settlement_id": "pay-21:0:sku-serum-c"', kept_amount_text)
+                self.assertIn('"amount_cents": 2000', kept_amount_text)
+                self.assertNotIn('"amount_cents": 3000', kept_amount_text)
+                echo_price = connector.create_draft_order(
+                    {
+                        "status": "completed",
+                        "id": 22,
+                        "order_id": 22,
+                        "financial_status": "paid",
+                        "line_items": [unpriced],
+                    }
+                )
+                self.assertEqual(echo_price["line_items"][0].get("price"), "20.00")
+                self.assertIsNone(echo_price.get("financial_status"))
+                echo_price_text = ledger.read_text(encoding="utf-8")
+                self.assertIn('"fulfillment_id": "22:0:sku-serum-c"', echo_price_text)
+                self.assertIn('"settlement_id": "pay-22:0:sku-serum-c"', echo_price_text)
+                self.assertIn('"amount_cents": 2000', echo_price_text)
+                still_open = connector.create_draft_order(
+                    {
+                        "status": "open",
+                        "id": 23,
+                        "order_id": 23,
+                        "financial_status": "paid",
+                        "line_items": [priced],
+                    }
+                )
+                self.assertEqual(still_open["status"], "open")
+                self.assertEqual(ledger.read_text(encoding="utf-8"), echo_price_text)
+                self.assertNotIn('"fulfillment_id": "23:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
             finally:
                 if previous_ledger is None:
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
