@@ -25,6 +25,33 @@ from .shopify import ShopifyB2BConnector
 logger = logging.getLogger(__name__)
 
 
+def _chain_stage():
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import chain_stage
+
+    return chain_stage
+
+
+def _record_platform_sale(platform: str, payload):
+    """Record a synced payload with the same command a webhook would use."""
+    return _chain_stage().record_synced_sale(platform, payload)
+
+
+def _record_platform_catalog(platform: str, payload):
+    """Record a synced product with the same catalog command a webhook would use."""
+    return _chain_stage().record_synced_catalog(platform, payload)
+
+
+def _record_platform_draft(payload):
+    """Record a created draft with the same sale command a webhook would use."""
+    return _chain_stage().record_draft_order(payload)
+
+
 class IntegrationGateway:
     """
     Unified API Gateway for managing all platform integrations.
@@ -190,9 +217,17 @@ class IntegrationGateway:
             try:
                 raw_appointments = connector.sync_appointments(since)
                 
-                # Map to unified model
+                # Map to unified model. A rejected named sale does not drop the rest.
                 unified = []
                 for raw in raw_appointments:
+                    recorded = _record_platform_sale(platform, raw)
+                    if isinstance(recorded, dict) and recorded.get("ok") is False:
+                        logger.error(
+                            "Supply chain rejected a synced %s sale: %s",
+                            platform,
+                            recorded.get("error") or "rejected",
+                        )
+                        continue
                     if platform == 'wix':
                         unified.append(connector.map_booking_to_unified(raw))
                     elif platform == 'shopify':
@@ -411,7 +446,17 @@ class IntegrationGateway:
             try:
                 if platform == 'shopify':
                     raw_products = connector.get_products()
-                    unified = [connector.map_product_to_unified(p) for p in raw_products]
+                    unified = []
+                    for raw in raw_products:
+                        recorded = _record_platform_catalog(platform, raw)
+                        if isinstance(recorded, dict) and recorded.get("ok") is False:
+                            logger.error(
+                                "Supply chain rejected a synced %s product: %s",
+                                platform,
+                                recorded.get("error") or "rejected",
+                            )
+                            continue
+                        unified.append(connector.map_product_to_unified(raw))
                     results[platform] = unified
                     logger.info(f"Synced {len(unified)} products from {platform}")
                 else:
@@ -479,7 +524,9 @@ class IntegrationGateway:
         shopify = self._connectors.get('shopify')
         if not shopify or not isinstance(shopify, ShopifyB2BConnector):
             raise IntegrationError("Shopify B2B connector not available")
-        
+        recorded = _record_platform_draft(draft_order_data)
+        if isinstance(recorded, dict) and recorded.get("ok") is False:
+            raise IntegrationError(recorded.get("error") or "supply chain rejected the draft")
         return shopify.create_draft_order(draft_order_data)
     
     # ==================== Webhook Registration ====================

@@ -132,13 +132,23 @@ class WixWebhookHandler:
             except Exception as e:
                 logger.error(f"Error processing webhook {event_type}: {e}")
                 raise WebhookError(f"Handler error: {e}", event_type=event_type)
-        else:
-            logger.warning(f"No handler registered for event: {event_type}")
+
+        # Default handlers already record a booking that names a delivery.
+        default_handler = getattr(self, self.EVENT_TYPES.get(event_type, ''), None)
+        if default_handler:
+            result = default_handler(event_data)
             return {
-                'status': 'ignored',
+                'status': 'processed',
                 'event_type': event_type,
-                'message': 'No handler registered'
+                'result': result
             }
+
+        logger.warning(f"No handler registered for event: {event_type}")
+        return {
+            'status': 'ignored',
+            'event_type': event_type,
+            'message': 'No handler registered'
+        }
     
     # Default event handlers (can be overridden)
     
@@ -146,25 +156,43 @@ class WixWebhookHandler:
         """Handle booking created event."""
         booking = data.get('booking', data)
         logger.info(f"Booking created: {booking.get('id')}")
-        return {'action': 'create', 'booking_id': booking.get('id')}
+        recorded = self._supply_chain("record_wix_deliveries", booking, "booking/created")
+        return {'action': 'create', 'booking_id': booking.get('id'), 'recorded': recorded}
     
     def on_booking_updated(self, data: Dict) -> Dict:
         """Handle booking updated event."""
         booking = data.get('booking', data)
         logger.info(f"Booking updated: {booking.get('id')}")
-        return {'action': 'update', 'booking_id': booking.get('id')}
+        recorded = self._supply_chain("record_wix_deliveries", booking, "booking/updated")
+        return {'action': 'update', 'booking_id': booking.get('id'), 'recorded': recorded}
     
     def on_booking_cancelled(self, data: Dict) -> Dict:
         """Handle booking cancelled event."""
         booking = data.get('booking', data)
         logger.info(f"Booking cancelled: {booking.get('id')}")
-        return {'action': 'cancel', 'booking_id': booking.get('id')}
+        recorded = self._supply_chain("record_wix_cancellation", booking, "booking/cancelled")
+        return {'action': 'cancel', 'booking_id': booking.get('id'), 'recorded': recorded}
     
     def on_booking_confirmed(self, data: Dict) -> Dict:
         """Handle booking confirmed event."""
         booking = data.get('booking', data)
         logger.info(f"Booking confirmed: {booking.get('id')}")
-        return {'action': 'confirm', 'booking_id': booking.get('id')}
+        recorded = self._supply_chain("record_wix_deliveries", booking, "booking/confirmed")
+        return {'action': 'confirm', 'booking_id': booking.get('id'), 'recorded': recorded}
+
+    def _supply_chain(self, recorder: str, data: Dict, topic: str):
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        import chain_stage
+
+        recorded = getattr(chain_stage, recorder)(data)
+        if isinstance(recorded, dict) and recorded.get("ok") is False:
+            raise WebhookError(recorded.get("error") or "supply chain rejected the webhook", event_type=topic)
+        return recorded
     
     def on_booking_declined(self, data: Dict) -> Dict:
         """Handle booking declined event."""

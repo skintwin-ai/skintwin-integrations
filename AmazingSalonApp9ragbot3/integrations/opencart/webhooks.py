@@ -89,7 +89,8 @@ class OpenCartWebhookHandler:
     def process_webhook(
         self,
         payload: bytes,
-        signature: Optional[str] = None
+        signature: Optional[str] = None,
+        event_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Process an incoming webhook.
@@ -110,45 +111,64 @@ class OpenCartWebhookHandler:
         except json.JSONDecodeError as e:
             raise WebhookError(f"Invalid JSON payload: {e}", event_type="unknown")
         
-        event_type = data.get('event', data.get('type', 'unknown'))
+        named = data.get('event', data.get('type'))
+        if named is None or str(named).strip() in ("", "unknown"):
+            named = event_type
+        event_name = str(named or "unknown").strip() or "unknown"
         event_data = data.get('data', data)
         
-        logger.info(f"Processing OpenCart webhook: {event_type}")
+        logger.info(f"Processing OpenCart webhook: {event_name}")
         
         # Call registered handler
-        handler = self._handlers.get(event_type)
+        handler = self._handlers.get(event_name)
         if handler:
             try:
                 result = handler(event_data)
                 return {
                     'status': 'processed',
-                    'event_type': event_type,
+                    'event_type': event_name,
                     'result': result
                 }
             except Exception as e:
-                logger.error(f"Error processing webhook {event_type}: {e}")
-                raise WebhookError(f"Handler error: {e}", event_type=event_type)
-        else:
-            logger.warning(f"No handler registered for event: {event_type}")
+                logger.error(f"Error processing webhook {event_name}: {e}")
+                raise WebhookError(f"Handler error: {e}", event_type=event_name)
+
+        # Default handlers already record a product or order that names a formula or sale.
+        default_handler = getattr(self, self.EVENT_TYPES.get(event_name, ''), None)
+        if default_handler:
+            result = default_handler(event_data)
             return {
-                'status': 'ignored',
-                'event_type': event_type,
-                'message': 'No handler registered'
+                'status': 'processed',
+                'event_type': event_name,
+                'result': result
             }
+
+        logger.warning(f"No handler registered for event: {event_name}")
+        return {
+            'status': 'ignored',
+            'event_type': event_name,
+            'message': 'No handler registered'
+        }
     
     # Default event handlers
     
     def on_order_created(self, data: Dict) -> Dict:
-        """Handle order created event."""
+        """Handle order created event.
+
+        A pending order stays off the ledger. A created order that is already shipped,
+        paid, or returned uses the same recorder as order/updated.
+        """
         order_id = data.get('order_id')
         logger.info(f"OpenCart order created: {order_id}")
-        return {'action': 'create', 'order_id': order_id}
+        recorded = self._supply_chain("record_opencart_fulfillments", data, "order/created")
+        return {'action': 'create', 'order_id': order_id, 'recorded': recorded}
     
     def on_order_updated(self, data: Dict) -> Dict:
         """Handle order updated event."""
         order_id = data.get('order_id')
         logger.info(f"OpenCart order updated: {order_id}")
-        return {'action': 'update', 'order_id': order_id}
+        recorded = self._supply_chain("record_opencart_fulfillments", data, "order/updated")
+        return {'action': 'update', 'order_id': order_id, 'recorded': recorded}
     
     def on_order_status_changed(self, data: Dict) -> Dict:
         """Handle order status changed event."""
@@ -156,24 +176,42 @@ class OpenCartWebhookHandler:
         old_status = data.get('old_status_id')
         new_status = data.get('new_status_id')
         logger.info(f"OpenCart order {order_id} status changed: {old_status} -> {new_status}")
+        recorded = self._supply_chain("record_opencart_fulfillments", data, "order/status_changed")
         return {
             'action': 'status_change',
             'order_id': order_id,
             'old_status': old_status,
-            'new_status': new_status
+            'new_status': new_status,
+            'recorded': recorded,
         }
     
     def on_product_created(self, data: Dict) -> Dict:
         """Handle product created event."""
         product_id = data.get('product_id')
         logger.info(f"OpenCart product created: {product_id}")
-        return {'action': 'create', 'product_id': product_id}
+        recorded = self._supply_chain("record_opencart_catalog", data, "product/created")
+        return {'action': 'create', 'product_id': product_id, 'recorded': recorded}
     
     def on_product_updated(self, data: Dict) -> Dict:
         """Handle product updated event."""
         product_id = data.get('product_id')
         logger.info(f"OpenCart product updated: {product_id}")
-        return {'action': 'update', 'product_id': product_id}
+        recorded = self._supply_chain("record_opencart_catalog", data, "product/updated")
+        return {'action': 'update', 'product_id': product_id, 'recorded': recorded}
+
+    def _supply_chain(self, recorder: str, data: Dict, topic: str):
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        import chain_stage
+
+        recorded = getattr(chain_stage, recorder)(data)
+        if isinstance(recorded, dict) and recorded.get("ok") is False:
+            raise WebhookError(recorded.get("error") or "supply chain rejected the webhook", event_type=topic)
+        return recorded
     
     def on_product_deleted(self, data: Dict) -> Dict:
         """Handle product deleted event."""

@@ -16,6 +16,17 @@ from utils.config_utils import ConfigManager
 bp = Blueprint('pos', __name__)
 
 
+def _named_text(source, *keys):
+    """The first non-blank string wins. A blank value falls through."""
+    if not hasattr(source, "get"):
+        return ""
+    for key in keys:
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def _settle_chain_payment(payment, amount):
     """Record settlement when this payment closes a supply-chain fulfillment."""
     import sys
@@ -28,13 +39,71 @@ def _settle_chain_payment(payment, amount):
 
     use_shared_ledger()
     payload = {
-        "fulfillment_id": payment.get("fulfillment_id"),
-        "settlement_id": payment.get("settlement_id"),
-        "amount_cents": payment.get("amount_cents"),
+        "fulfillment_id": payment.get("fulfillment_id") if hasattr(payment, "get") else None,
+        "fulfillmentId": payment.get("fulfillmentId") if hasattr(payment, "get") else None,
+        "settlement_id": payment.get("settlement_id") if hasattr(payment, "get") else None,
+        "settlementId": payment.get("settlementId") if hasattr(payment, "get") else None,
+        "amount_cents": payment.get("amount_cents") if hasattr(payment, "get") else None,
         "amount": amount,
-        "currency": payment.get("currency") or "USD",
+        "currency": (payment.get("currency") if hasattr(payment, "get") else None) or "USD",
     }
     return settlement_for_payment(payload)
+
+
+def _payment_field(payment, name):
+    if isinstance(payment, dict):
+        return payment.get(name)
+    return getattr(payment, name, None)
+
+
+def _settle_paystack(transaction):
+    """Record a verified Paystack charge that names a fulfillment."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from chain_stage import record_paystack_settlement, use_shared_ledger
+
+    use_shared_ledger()
+    return record_paystack_settlement(transaction)
+
+
+def _return_chain_sale(
+    fulfillment_id,
+    transaction_id,
+    return_id=None,
+    settlement_id=None,
+    payment_intent_id=None,
+):
+    """Return the sale before the processor refunds the payment."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from chain_stage import return_for_refund, use_shared_ledger
+
+    payload = {}
+    if isinstance(fulfillment_id, str) and fulfillment_id.strip():
+        payload["fulfillment_id"] = fulfillment_id.strip()
+    if isinstance(settlement_id, str) and settlement_id.strip():
+        payload["settlement_id"] = settlement_id.strip()
+    if isinstance(payment_intent_id, str) and payment_intent_id.strip():
+        payload["payment_intent_id"] = payment_intent_id.strip()
+    if not payload:
+        return None
+    named_return = return_id.strip() if isinstance(return_id, str) and return_id.strip() else ""
+    if named_return:
+        payload["return_id"] = named_return
+    elif payload.get("fulfillment_id"):
+        payload["return_id"] = f"return:{transaction_id}:{payload['fulfillment_id']}"
+    else:
+        payload["return_key"] = str(transaction_id)
+    use_shared_ledger()
+    return return_for_refund(payload)
 
 # Initialize Stripe with the API key from ConfigManager or fallback to environment variable
 stripe_secret_key = ConfigManager.get_stripe_secret_key() or os.environ.get('STRIPE_SECRET_KEY')
@@ -146,6 +215,8 @@ def initialize_paystack():
             'client_id': client_id,
             'description': description,
             'points_redeemed': points_to_redeem,
+            'fulfillment_id': _named_text(data, 'fulfillment_id', 'fulfillmentId') or None,
+            'settlement_id': _named_text(data, 'settlement_id', 'settlementId') or None,
             'custom_fields': [
                 {
                     'display_name': 'Client ID',
@@ -210,13 +281,27 @@ def verify_paystack():
         
         if response.status_code == 200 and response_data['status'] and response_data['data']['status'] == 'success':
             # Get transaction details from Paystack response
-            metadata = response_data['data'].get('metadata', {})
+            metadata = response_data['data'].get('metadata') or {}
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except json.JSONDecodeError:
+                    metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
             client_id = metadata.get('client_id')
             description = metadata.get('description', 'Paystack Payment')
             points_redeemed = int(metadata.get('points_redeemed', 0))
             
             # Get amount in dollars
             amount = float(response_data['data']['amount']) / 100  # Convert from kobo/cents to dollars
+            fulfillment_id = _named_text(metadata, 'fulfillment_id', 'fulfillmentId') or None
+            settled = _settle_paystack(response_data)
+            if settled is not None:
+                body, status = settled
+                if status != 200:
+                    flash(body.get('error') or 'supply chain rejected the settlement', 'error')
+                    return redirect(url_for('pos.index'))
             
             # Get loyalty points configuration
             points_per_dollar = ConfigManager.get_points_per_dollar()
@@ -234,7 +319,8 @@ def verify_paystack():
                     payment_provider='paystack',
                     payment_intent_id=reference,  # Use Paystack reference as payment_intent_id
                     payment_method_id=response_data['data'].get('authorization', {}).get('authorization_code'),
-                    points_used=points_redeemed
+                    points_used=points_redeemed,
+                    fulfillment_id=fulfillment_id if isinstance(fulfillment_id, str) else None,
                 )
                 transaction_id = transaction.id
                 
@@ -275,7 +361,8 @@ def verify_paystack():
                     client_id=client_id,
                     amount=amount,
                     description=description,
-                    points_used=points_redeemed
+                    points_used=points_redeemed,
+                    fulfillment_id=fulfillment_id if isinstance(fulfillment_id, str) else None,
                 )
                 
                 # Update client's loyalty points in old system
@@ -427,7 +514,8 @@ def create_transaction_route():
                     payment_method_id=payment_method_id,
                     payment_intent_id=payment_intent.id,
                     points_used=points_to_redeem,
-                    payment_provider=payment_provider
+                    payment_provider=payment_provider,
+                    fulfillment_id=_named_text(payment, "fulfillment_id", "fulfillmentId") or None,
                 )
                 transaction_id = transaction.id
                 
@@ -463,7 +551,8 @@ def create_transaction_route():
                     client_id=client_id, 
                     amount=amount, 
                     description=description,
-                    points_used=points_to_redeem
+                    points_used=points_to_redeem,
+                    fulfillment_id=_named_text(payment, "fulfillment_id", "fulfillmentId") or None,
                 )
                 
                 # Update client's loyalty points in old system
@@ -580,6 +669,12 @@ def confirm_payment():
     
     if not payment_intent_id or not client_id:
         return jsonify({'error': 'Missing required data'}), 400
+
+    confirmed = _settle_chain_payment(data, data.get('amount'))
+    if confirmed is not None:
+        body, status = confirmed
+        if status != 200:
+            return jsonify(body), status
     
     # Get loyalty points configuration
     points_per_dollar = ConfigManager.get_points_per_dollar()
@@ -612,7 +707,8 @@ def confirm_payment():
                 payment_method_id=payment_method_id,
                 payment_intent_id=payment_intent_id,
                 points_used=0,  # Cannot redeem points at this stage
-                payment_provider=payment_provider
+                payment_provider=payment_provider,
+                fulfillment_id=_named_text(data, "fulfillment_id", "fulfillmentId") or None,
             )
             transaction_id = transaction.id
             
@@ -644,7 +740,8 @@ def confirm_payment():
                 client_id=client_id,
                 amount=amount,
                 description=description,
-                points_used=0
+                points_used=0,
+                fulfillment_id=_named_text(data, "fulfillment_id", "fulfillmentId") or None,
             )
             
             # Update client's loyalty points in old system
@@ -730,6 +827,30 @@ def refund_transaction(id):
         if not payment_intent_id:
             flash('This transaction has no associated payment to refund')
             return redirect(url_for('pos.index'))
+
+        fulfillment_id = ""
+        for key in ("fulfillment_id", "fulfillmentId"):
+            value = _payment_field(transaction, key)
+            if isinstance(value, str) and value.strip():
+                fulfillment_id = value.strip()
+                break
+        refund_body = request.get_json(silent=True) if request.is_json else {}
+        if not isinstance(refund_body, dict):
+            refund_body = {}
+        if not fulfillment_id:
+            fulfillment_id = _named_text(refund_body, "fulfillment_id", "fulfillmentId")
+        returned = _return_chain_sale(
+            fulfillment_id,
+            id,
+            _named_text(refund_body, "return_id", "returnId"),
+            _named_text(refund_body, "settlement_id", "settlementId"),
+            payment_intent_id if isinstance(payment_intent_id, str) else "",
+        )
+        if returned is not None:
+            body, status = returned
+            if status != 200:
+                flash(body.get("error") or "supply chain rejected the return", "error")
+                return redirect(url_for("pos.index"))
         
         # Process the refund through the appropriate payment provider
         if payment_provider == 'stripe':
