@@ -57,6 +57,69 @@ def _record_named_opencart_sale(order, order_id=None):
     return recorded
 
 
+def _opencart_request_paid(order) -> bool:
+    """True when the request already says this sale is paid."""
+    if not isinstance(order, dict):
+        return False
+    if order.get("paid") is True:
+        return True
+    stage = _chain_stage()
+    return stage._opencart_status(order) in stage._OPENCART_PAID
+
+
+def _record_opencart_request(order, order_id=None):
+    """A request that already names a shipped sale or a return is recorded before OpenCart is called.
+
+    A payment that has not shipped stays off the ledger until that sale is on the ledger.
+    Paying a sale that already shipped adds the settlement. A payment for a sale that is not
+    on the ledger yet waits for the saved shipment.
+    """
+    if not isinstance(order, dict):
+        return None
+    stage = _chain_stage()
+    payload = dict(order)
+    if order_id and not str(payload.get("order_id") or payload.get("id") or "").strip():
+        payload["order_id"] = order_id
+    _copy_opencart_status_id(payload)
+    status = stage._opencart_status(payload)
+    shipped = payload.get("fulfilled") is True or status in stage._OPENCART_SHIPPED
+    if shipped or stage._opencart_returned(payload):
+        return _record_named_opencart_sale(order, order_id)
+    if not _opencart_request_paid(payload):
+        return None
+    try:
+        settlements = stage.opencart_settlement_commands(payload)
+    except stage.StageRejection:
+        return None
+    if not settlements:
+        return None
+    if any(not stage._recorded_fulfillment(command["args"]["fulfillment_id"]) for command in settlements):
+        return None
+    return _record_named_opencart_sale(order, order_id)
+
+
+def _saved_opencart_payment(saved, requested):
+    """A saved shipment that omits its payment settles when the request already says paid.
+
+    A present paid status wins, including an explicit unpaid flag. An open or returned saved order
+    is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    stage = _chain_stage()
+    if stage._opencart_returned(saved):
+        return saved
+    status = stage._opencart_status(saved)
+    shipped = saved.get("fulfilled") is True or status in stage._OPENCART_SHIPPED
+    if not shipped:
+        return saved
+    if saved.get("paid") is False or saved.get("paid") is True or status in stage._OPENCART_PAID:
+        return saved
+    if not _opencart_request_paid(requested):
+        return saved
+    return {**saved, "paid": True}
+
+
 def _copy_opencart_status_id(payload):
     """A status id is the order status when the payload does not name one."""
     status = str(payload.get("status") or payload.get("new_status") or payload.get("order_status") or "").strip()
@@ -312,6 +375,7 @@ def _record_saved_opencart_order(saved, order_id, requested=None):
     """A saved sale or cancellation that omits its id returns the sale recorded for the order being created.
 
     A saved shipment that omits its products draws the products the request already named.
+    A saved shipment that omits its payment settles when the request already says paid.
     A saved order that names itself keeps that id. An open saved order is recorded unchanged.
     """
     if not isinstance(saved, dict):
@@ -329,6 +393,7 @@ def _record_saved_opencart_order(saved, order_id, requested=None):
         payload["order_id"] = order_id
     if requested is not None:
         payload = _opencart_saved_lines(payload, requested)
+        payload = _saved_opencart_payment(payload, requested)
     return _record_named_opencart_sale(payload)
 
 
@@ -702,7 +767,7 @@ class OpenCartConnector(BaseConnector):
         Returns:
             Dict: Created order data
         """
-        _record_named_opencart_sale(appointment_data)
+        _record_opencart_request(appointment_data)
         # Set customer
         self.set_customer(
             first_name=appointment_data.get('client_first_name', ''),
@@ -748,7 +813,7 @@ class OpenCartConnector(BaseConnector):
         Returns:
             Dict: Updated order data
         """
-        _record_named_opencart_sale(appointment_data, appointment_id)
+        _record_opencart_request(appointment_data, appointment_id)
         # OpenCart doesn't have direct order update
         # Update via order history
         if appointment_data.get('status'):
@@ -759,6 +824,8 @@ class OpenCartConnector(BaseConnector):
             )
             if saved is not appointment_data:
                 recorded = _opencart_saved_lines(saved, appointment_data) if isinstance(saved, dict) else saved
+                if isinstance(recorded, dict):
+                    recorded = _saved_opencart_payment(recorded, appointment_data)
                 _record_named_opencart_sale(recorded, appointment_id)
             return saved
         
