@@ -160,18 +160,51 @@ def _opencart_resolved_sale_fields(item):
     return stage._shopify_line(stage._opencart_identity(item))
 
 
-def _stamp_opencart_sale_line(saved_line, request_line):
-    """Copy the sku and quantity a saved product omits from the request product at that index.
+def _opencart_stated_amount(item):
+    """The price or total a product already states. A blank one is absent."""
+    if not isinstance(item, dict):
+        return None
+    price = item.get("price")
+    if price is not None and not (isinstance(price, str) and not price.strip()):
+        return ("price", price)
+    total = item.get("total")
+    if total is None or (isinstance(total, str) and not total.strip()):
+        return None
+    return ("total", total)
 
-    A saved product that already names a sale stays as written. A different sku or model does not
-    lend its quantity. A word such as "lots" is a quantity and stays.
+
+def _opencart_request_amount(saved_line, request_line):
+    """The amount a request product names for this sku. A different model does not lend it."""
+    stated = _opencart_stated_amount(request_line)
+    if stated is None:
+        return None
+    saved_sku = _opencart_sku_text(saved_line)
+    request_sku = _opencart_sku_text(request_line)
+    if saved_sku:
+        if request_sku != saved_sku:
+            return None
+    elif not request_sku:
+        return None
+    return stated
+
+
+def _stamp_opencart_sale_line(saved_line, request_line):
+    """Copy the sku, quantity, and price a saved product omits from the request product at that index.
+
+    A saved product that already names a sale keeps its quantity. A missing price still comes from the
+    request product with the same sku or model. A different sku or model does not lend its quantity
+    or its price. A word such as "lots" is a quantity and stays.
     """
     if not isinstance(saved_line, dict) or not isinstance(request_line, dict):
         return saved_line
     if _opencart_skus_conflict(saved_line, request_line):
         return saved_line
+    amount = _opencart_request_amount(saved_line, request_line)
     if _opencart_sale_line_state(saved_line) is True:
-        return saved_line
+        if amount is None or _opencart_stated_amount(saved_line) is not None:
+            return saved_line
+        key, value = amount
+        return {**saved_line, key: value}
     if _opencart_sale_line_state(request_line) is not True:
         return saved_line
     saved_location, saved_milligrams, saved_kind, saved_practitioner = _opencart_resolved_sale_fields(
@@ -198,6 +231,10 @@ def _stamp_opencart_sale_line(saved_line, request_line):
         changed = True
     if not saved_practitioner and request_practitioner:
         stamped["practitioner_id"] = request_practitioner
+        changed = True
+    if _opencart_stated_amount(stamped) is None and amount is not None:
+        key, value = amount
+        stamped[key] = value
         changed = True
     if not changed:
         return saved_line

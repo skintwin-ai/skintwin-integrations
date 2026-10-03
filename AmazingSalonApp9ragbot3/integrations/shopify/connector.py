@@ -307,17 +307,47 @@ def _resolved_sale_fields(order, item):
     return stage._shopify_line(item, defaults)
 
 
-def _stamp_sale_line(saved_line, request_line, saved_order, requested_order):
-    """Copy the sku and quantity a saved line omits from the request line at that index.
+def _stated_price(item):
+    """A price the line already states. A blank one is absent."""
+    if not isinstance(item, dict):
+        return None
+    price = item.get("price")
+    if price is None or (isinstance(price, str) and not price.strip()):
+        return None
+    return price
 
-    A saved line that already names a sale stays as written. A different sku does not lend its quantity.
+
+def _request_line_price(saved_line, request_line):
+    """The price a request line names for this sku. A different sku does not lend it."""
+    price = _stated_price(request_line)
+    if price is None or not isinstance(request_line, dict):
+        return None
+    saved_sku = _sku_text(saved_line)
+    request_sku = _sku_text(request_line)
+    if saved_sku:
+        if request_sku != saved_sku:
+            return None
+        return price
+    if not request_sku:
+        return None
+    return price
+
+
+def _stamp_sale_line(saved_line, request_line, saved_order, requested_order):
+    """Copy the sku, quantity, and price a saved line omits from the request line at that index.
+
+    A saved line that already names a sale keeps its quantity. A missing price still comes from the
+    request line with the same sku. A different sku does not lend its quantity or its price.
     """
     if not isinstance(saved_line, dict) or not isinstance(request_line, dict):
         return saved_line
     if _skus_conflict(saved_line, request_line):
         return saved_line
+    price = _request_line_price(saved_line, request_line)
     if _sale_line_state(saved_order, saved_line) is True:
-        return saved_line
+        if price is None or _stated_price(saved_line) is not None:
+            return saved_line
+        return {**saved_line, "price": price}
     if _sale_line_state(requested_order, request_line) is not True:
         return saved_line
     saved_location, saved_milligrams, saved_kind, saved_practitioner = _resolved_sale_fields(
@@ -344,6 +374,9 @@ def _stamp_sale_line(saved_line, request_line, saved_order, requested_order):
         changed = True
     if not saved_practitioner and request_practitioner:
         stamped["practitioner_id"] = request_practitioner
+        changed = True
+    if _stated_price(stamped) is None and price is not None:
+        stamped["price"] = price
         changed = True
     if not changed:
         return saved_line
