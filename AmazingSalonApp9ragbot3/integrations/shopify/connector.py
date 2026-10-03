@@ -227,10 +227,117 @@ def _order_names_a_sale(order):
         return None
 
 
+def _order_lines(order):
+    """The line list an order already states. A missing list is none."""
+    if not isinstance(order, dict):
+        return None
+    if isinstance(order.get("line_items"), list):
+        return order.get("line_items")
+    if isinstance(order.get("items"), list):
+        return order.get("items")
+    return None
+
+
+def _sale_line_state(order, item):
+    """True when the line names a sale. None when the line is present but invalid."""
+    if not isinstance(item, dict):
+        return False
+    stage = _chain_stage()
+    probe = {"id": "named", "line_items": [item]}
+    notes = order.get("note_attributes") if isinstance(order, dict) else None
+    if notes is not None:
+        probe["note_attributes"] = notes
+    try:
+        return bool(stage.shopify_fulfillment_commands(probe))
+    except stage.StageRejection:
+        return None
+
+
+def _skus_conflict(saved_line, request_line):
+    """A saved sku that differs from the request sku does not take the request's quantity."""
+    saved_sku = _sku_text(saved_line)
+    request_sku = _sku_text(request_line)
+    return bool(saved_sku and request_sku and saved_sku != request_sku)
+
+
+def _resolved_sale_fields(order, item):
+    stage = _chain_stage()
+    defaults = stage._order_line_defaults(order) if isinstance(order, dict) else {}
+    if not isinstance(item, dict):
+        return None, None, None, None
+    return stage._shopify_line(item, defaults)
+
+
+def _stamp_sale_line(saved_line, request_line, saved_order, requested_order):
+    """Copy the sku and quantity a saved line omits from the request line at that index.
+
+    A saved line that already names a sale stays as written. A different sku does not lend its quantity.
+    """
+    if not isinstance(saved_line, dict) or not isinstance(request_line, dict):
+        return saved_line
+    if _skus_conflict(saved_line, request_line):
+        return saved_line
+    if _sale_line_state(saved_order, saved_line) is True:
+        return saved_line
+    if _sale_line_state(requested_order, request_line) is not True:
+        return saved_line
+    saved_location, saved_milligrams, saved_kind, saved_practitioner = _resolved_sale_fields(
+        saved_order, saved_line
+    )
+    request_location, request_milligrams, request_kind, request_practitioner = _resolved_sale_fields(
+        requested_order, request_line
+    )
+    stamped = dict(saved_line)
+    changed = False
+    if not _sku_text(stamped):
+        sku = _sku_text(request_line)
+        if sku:
+            stamped["sku"] = sku
+            changed = True
+    if saved_location is None and isinstance(request_location, str) and request_location.strip():
+        stamped["location"] = request_location.strip()
+        changed = True
+    if saved_milligrams is None and request_milligrams is not None:
+        stamped["milligrams"] = request_milligrams
+        changed = True
+    if not saved_kind and request_kind:
+        stamped["kind"] = request_kind
+        changed = True
+    if not saved_practitioner and request_practitioner:
+        stamped["practitioner_id"] = request_practitioner
+        changed = True
+    if not changed:
+        return saved_line
+    return stamped
+
+
+def _stamp_omitted_sale_lines(saved, requested):
+    """Saved lines that omit a sku or quantity take that identity from the same request line.
+
+    A saved line that names its own sale stays. A blank request sku does not move onto another line.
+    """
+    saved_lines = _order_lines(saved)
+    requested_lines = _order_lines(requested)
+    if not saved_lines or not isinstance(requested_lines, list):
+        return None
+    stamped = []
+    changed = False
+    for index, line in enumerate(saved_lines):
+        request_line = requested_lines[index] if index < len(requested_lines) else None
+        next_line = _stamp_sale_line(line, request_line, saved, requested)
+        if next_line is not line:
+            changed = True
+        stamped.append(next_line)
+    if not changed:
+        return None
+    return stamped
+
+
 def _saved_shopify_fulfilled_lines(saved, requested):
     """A saved fulfilled order that omits its sale lines draws the lines the request already named.
 
-    A saved order that names its own sale keeps those lines. An open or returned order is recorded unchanged.
+    A saved line that already names a sale keeps that line. A saved line that omits its sku or quantity
+    takes them from the request line at that index. An open or returned order is recorded unchanged.
     """
     if not isinstance(saved, dict) or not isinstance(requested, dict):
         return saved
@@ -240,7 +347,10 @@ def _saved_shopify_fulfilled_lines(saved, requested):
     if stage._shopify_returned(saved):
         return saved
     if _order_names_a_sale(saved) is not False:
-        return saved
+        lines = _stamp_omitted_sale_lines(saved, requested)
+        if lines is None:
+            return saved
+        return {**saved, "line_items": lines}
     if _order_names_a_sale(requested) is not True:
         return saved
     lines = requested.get("line_items")
@@ -456,14 +566,18 @@ def _draft_names_a_sale(draft):
 def _saved_shopify_draft_lines(saved, requested):
     """A completed draft that omits its sale lines draws the lines the request already named.
 
-    A saved draft that names its own sale keeps those lines. An open draft is recorded unchanged.
+    A saved line that already names a sale keeps that line. A saved line that omits its sku or quantity
+    takes them from the request line at that index. An open draft is recorded unchanged.
     """
     if not isinstance(saved, dict) or not isinstance(requested, dict):
         return saved
     if str(saved.get("status") or "").strip().lower() != "completed":
         return saved
     if _draft_names_a_sale(saved) is not False:
-        return saved
+        lines = _stamp_omitted_sale_lines(saved, requested)
+        if lines is None:
+            return saved
+        return {**saved, "line_items": lines}
     if _draft_names_a_sale(requested) is not True:
         return saved
     lines = requested.get("line_items")
