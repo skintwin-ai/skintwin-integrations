@@ -646,40 +646,74 @@ def _refunds_with_request_identity(saved, requested):
     return rebuilt
 
 
+def _request_names_partial_refund(requested) -> bool:
+    """True when the request already says this sale was partly refunded.
+
+    A present financial status wins. Refund lines count when that status is omitted.
+    """
+    if not isinstance(requested, dict):
+        return False
+    status = str(requested.get("financial_status") or "").strip().lower()
+    if status:
+        return status == "partially_refunded"
+    return bool(_saved_refund_lines(requested))
+
+
 def _saved_shopify_refunds(saved, requested):
     """A saved partial refund that omits its refund lines returns the sale the request already named.
 
+    A saved order that omits its partial refund returns that sale when the request already says so.
     A saved refund line that omits its sku or line id uses the identity the request already named, and keeps its quantity.
     A saved refund that names its own lines keeps those lines. An open saved order stays unchanged.
+    A present financial status wins. A return already recorded for a different sale stays that return.
     """
     if not isinstance(saved, dict) or not isinstance(requested, dict):
         return saved
     if str(saved.get("fulfillment_status") or "").strip().lower() != "fulfilled":
         return saved
-    if str(saved.get("financial_status") or "").strip().lower() != "partially_refunded":
-        return saved
     stage = _chain_stage()
     if stage._shopify_returned(saved):
         return saved
+    original = saved
+    financial = str(saved.get("financial_status") or "").strip().lower()
+    stamped_status = False
+    if not financial and _request_names_partial_refund(requested):
+        saved = {**saved, "financial_status": "partially_refunded"}
+        financial = "partially_refunded"
+        stamped_status = True
+    if financial != "partially_refunded":
+        return original
     refunds = saved.get("refunds")
     if refunds is not None and not isinstance(refunds, list):
-        return saved
+        return original
     if not _saved_refund_lines(saved):
         requested_refunds = requested.get("refunds")
         if not isinstance(requested_refunds, list) or not requested_refunds:
-            return saved
+            return original
         stamped = {**saved, "refunds": list(requested_refunds)}
     else:
         enriched = _refunds_with_request_identity(saved, requested)
         if not enriched:
-            return saved
-        stamped = {**saved, "refunds": enriched}
+            stamped = saved
+        else:
+            stamped = {**saved, "refunds": enriched}
     try:
         named = stage.shopify_refunded_line_commands(stamped)
     except stage.StageRejection:
-        return saved
+        return original
     if not named:
-        return saved
+        return original
+    if stamped_status:
+        try:
+            commands = stage.shopify_order_update_commands(stamped)
+        except stage.StageRejection:
+            return original
+        if not any(command.get("command") == "return_sale" for command in commands):
+            return original
+        if stage._unrecorded(commands) is None:
+            return original
+    elif stamped is original:
+        return original
     return stamped
 
 
