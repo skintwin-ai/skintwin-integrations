@@ -116,10 +116,125 @@ def _request_sale_lines(requested):
     return []
 
 
+def _opencart_product_key(order):
+    """The product list an order already states. A missing list is none."""
+    if not isinstance(order, dict):
+        return None
+    for key in ("products", "line_items", "items"):
+        if isinstance(order.get(key), list):
+            return key
+    return None
+
+
+def _opencart_sku_text(item):
+    """The sku a product already states. A model is that sku. A title is not."""
+    if not isinstance(item, dict):
+        return ""
+    stage = _chain_stage()
+    return stage._named_sku(item) or stage._named(item, "model")
+
+
+def _opencart_sale_line_state(item):
+    """True when the product names a sale. None when the product is present but invalid."""
+    if not isinstance(item, dict):
+        return False
+    stage = _chain_stage()
+    probe = {"order_id": "named", "status": "shipped", "products": [item]}
+    try:
+        return bool(stage.opencart_fulfillment_commands(probe))
+    except stage.StageRejection:
+        return None
+
+
+def _opencart_skus_conflict(saved_line, request_line):
+    """A saved sku or model that differs from the request does not take the request's quantity."""
+    saved_sku = _opencart_sku_text(saved_line)
+    request_sku = _opencart_sku_text(request_line)
+    return bool(saved_sku and request_sku and saved_sku != request_sku)
+
+
+def _opencart_resolved_sale_fields(item):
+    stage = _chain_stage()
+    if not isinstance(item, dict):
+        return None, None, None, None
+    return stage._shopify_line(stage._opencart_identity(item))
+
+
+def _stamp_opencart_sale_line(saved_line, request_line):
+    """Copy the sku and quantity a saved product omits from the request product at that index.
+
+    A saved product that already names a sale stays as written. A different sku or model does not
+    lend its quantity. A word such as "lots" is a quantity and stays.
+    """
+    if not isinstance(saved_line, dict) or not isinstance(request_line, dict):
+        return saved_line
+    if _opencart_skus_conflict(saved_line, request_line):
+        return saved_line
+    if _opencart_sale_line_state(saved_line) is True:
+        return saved_line
+    if _opencart_sale_line_state(request_line) is not True:
+        return saved_line
+    saved_location, saved_milligrams, saved_kind, saved_practitioner = _opencart_resolved_sale_fields(
+        saved_line
+    )
+    request_location, request_milligrams, request_kind, request_practitioner = _opencart_resolved_sale_fields(
+        request_line
+    )
+    stamped = dict(saved_line)
+    changed = False
+    if not _opencart_sku_text(stamped):
+        sku = _opencart_sku_text(request_line)
+        if sku:
+            stamped["sku"] = sku
+            changed = True
+    if saved_location is None and isinstance(request_location, str) and request_location.strip():
+        stamped["location"] = request_location.strip()
+        changed = True
+    if saved_milligrams is None and request_milligrams is not None:
+        stamped["milligrams"] = request_milligrams
+        changed = True
+    if not saved_kind and request_kind:
+        stamped["kind"] = request_kind
+        changed = True
+    if not saved_practitioner and request_practitioner:
+        stamped["practitioner_id"] = request_practitioner
+        changed = True
+    if not changed:
+        return saved_line
+    return stamped
+
+
+def _stamp_omitted_opencart_lines(saved, requested):
+    """Saved products that omit a sku or quantity take that identity from the same request product.
+
+    A saved product that names its own sale stays. A blank request sku does not move onto another product.
+    """
+    key = _opencart_product_key(saved)
+    if key is None:
+        return None
+    saved_lines = saved.get(key)
+    requested_lines = _request_sale_lines(requested)
+    if not saved_lines or not requested_lines:
+        return None
+    stamped = []
+    changed = False
+    for index, line in enumerate(saved_lines):
+        request_line = requested_lines[index] if index < len(requested_lines) else None
+        next_line = _stamp_opencart_sale_line(line, request_line)
+        if next_line is not line:
+            changed = True
+        stamped.append(next_line)
+    if not changed:
+        return None
+    return stamped
+
+
 def _opencart_saved_lines(saved, requested):
     """A saved shipment that omits its products draws the products the request already named.
 
-    A saved order that names its own sale keeps those products. An open or returned order is unchanged.
+    A saved product that already names a sale keeps that product. A saved product that omits its sku,
+    model, or quantity takes them from the request product at that index. An open or returned order
+    is unchanged.
     """
     if not isinstance(saved, dict) or not isinstance(requested, dict):
         return saved
@@ -132,7 +247,14 @@ def _opencart_saved_lines(saved, requested):
     if payload.get("fulfilled") is not True and status not in stage._OPENCART_SHIPPED:
         return saved
     if _opencart_names_a_sale(payload) is not False:
-        return saved
+        lines = _stamp_omitted_opencart_lines(payload, requested)
+        if lines is None:
+            return saved
+        key = _opencart_product_key(payload)
+        if key is None:
+            return saved
+        payload[key] = lines
+        return payload
     if _opencart_names_a_sale(requested) is not True:
         return saved
     lines = _request_sale_lines(requested)
