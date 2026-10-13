@@ -26,6 +26,75 @@ from ..common.models import (
 logger = logging.getLogger(__name__)
 
 
+def _chain_stage():
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import chain_stage
+
+    return chain_stage
+
+
+def _reject_ledger(recorded, label: str):
+    if isinstance(recorded, dict) and recorded.get("ok") is False:
+        raise IntegrationError(recorded.get("error") or f"supply chain rejected the {label}")
+
+
+def _wix_services(appointment_data):
+    if not isinstance(appointment_data, dict):
+        return []
+    services = appointment_data.get("services") or []
+    if isinstance(services, dict):
+        return [services]
+    if isinstance(services, list):
+        return services
+    return []
+
+
+def _names_wix_delivery(appointment_data) -> bool:
+    return any(
+        isinstance(service, dict) and isinstance(service.get("delivery"), dict)
+        for service in _wix_services(appointment_data)
+    )
+
+
+_WIX_CANCELLED = frozenset({"canceled", "cancelled"})
+
+
+def _wix_update_cancelled(appointment_data) -> bool:
+    """Wix spells the status CANCELED. A declined booking is not a cancellation."""
+    if not isinstance(appointment_data, dict):
+        return False
+    nested = appointment_data.get("booking") if isinstance(appointment_data.get("booking"), dict) else appointment_data
+    status = str(nested.get("status") or "").strip().lower()
+    return status in _WIX_CANCELLED
+
+
+def _record_wix_cancellation(booking_id):
+    """A cancelled booking returns the delivery that booking already recorded."""
+    booking = str(booking_id or "").strip()
+    if not booking:
+        return None
+    recorded = _chain_stage().record_wix_cancellation({"id": booking})
+    _reject_ledger(recorded, "booking")
+    return recorded
+
+
+def _record_named_wix_delivery(appointment_data, booking_id=None):
+    """A booking that already names a delivery records the same transfer a webhook would."""
+    if not _names_wix_delivery(appointment_data):
+        return None
+    booking = appointment_data
+    if booking_id and not str(appointment_data.get("id") or "").strip():
+        booking = {**appointment_data, "id": booking_id}
+    recorded = _chain_stage().record_wix_deliveries(booking)
+    _reject_ledger(recorded, "booking")
+    return recorded
+
+
 class WixBookingsConnector(BaseConnector):
     """
     Connector for Wix Bookings API.
@@ -332,6 +401,10 @@ class WixBookingsConnector(BaseConnector):
         Returns:
             Dict: Created booking data
         """
+        request_cancelled = _wix_update_cancelled(appointment_data)
+        omitted_cancel = request_cancelled and not _names_wix_delivery(appointment_data)
+        if not omitted_cancel:
+            _record_named_wix_delivery(appointment_data)
         try:
             # Map unified appointment to Wix booking format
             wix_booking = self._map_to_wix_booking(appointment_data)
@@ -349,11 +422,26 @@ class WixBookingsConnector(BaseConnector):
             
             created_booking = response.get('booking', response)
             logger.info(f"Created Wix booking: {created_booking.get('id')}")
-            
-            return created_booking
         except Exception as e:
             logger.error(f"Failed to create Wix booking: {e}")
             raise IntegrationError(f"Failed to create booking: {e}", platform=self.PLATFORM_NAME)
+        # Wix is already called. A delivery on the created booking is the same transfer a webhook would record.
+        # A cancellation that omits the delivery returns the movement this booking already recorded.
+        echo_omits = (
+            created_booking is not appointment_data
+            and _wix_update_cancelled(created_booking)
+            and not _names_wix_delivery(created_booking)
+        )
+        if created_booking is not appointment_data and not request_cancelled and not echo_omits:
+            _record_named_wix_delivery(created_booking)
+        if omitted_cancel or echo_omits:
+            booking_id = str(
+                (appointment_data.get("id") if isinstance(appointment_data, dict) else "")
+                or created_booking.get("id")
+                or ""
+            ).strip()
+            _record_wix_cancellation(booking_id)
+        return created_booking
     
     def update_appointment(self, appointment_id: str, appointment_data: Dict) -> Dict:
         """
@@ -366,6 +454,11 @@ class WixBookingsConnector(BaseConnector):
         Returns:
             Dict: Updated booking data
         """
+        omitted_cancel = _wix_update_cancelled(appointment_data) and not _names_wix_delivery(
+            appointment_data
+        )
+        if not omitted_cancel:
+            _record_named_wix_delivery(appointment_data, appointment_id)
         try:
             # Get current booking for revision
             current = self.get_booking(appointment_id)
@@ -382,11 +475,21 @@ class WixBookingsConnector(BaseConnector):
             
             updated_booking = response.get('booking', response)
             logger.info(f"Updated Wix booking: {appointment_id}")
-            
-            return updated_booking
         except Exception as e:
             logger.error(f"Failed to update Wix booking {appointment_id}: {e}")
             raise IntegrationError(f"Failed to update booking: {e}", platform=self.PLATFORM_NAME)
+        # Wix is already called. A delivery on the updated booking is the same transfer a webhook would record.
+        # A cancellation that omits the delivery returns the movement this booking already recorded.
+        response_omits = (
+            updated_booking is not appointment_data
+            and _wix_update_cancelled(updated_booking)
+            and not _names_wix_delivery(updated_booking)
+        )
+        if updated_booking is not appointment_data and not omitted_cancel and not response_omits:
+            _record_named_wix_delivery(updated_booking, appointment_id)
+        if omitted_cancel or response_omits:
+            _record_wix_cancellation(appointment_id)
+        return updated_booking
     
     def cancel_appointment(self, appointment_id: str) -> bool:
         """
@@ -399,17 +502,17 @@ class WixBookingsConnector(BaseConnector):
             bool: True if cancellation was successful
         """
         try:
-            response = self.post(f"{self.ENDPOINTS['bookings']}/{appointment_id}/cancel", {
+            self.post(f"{self.ENDPOINTS['bookings']}/{appointment_id}/cancel", {
                 'participantNotification': {
                     'notifyParticipants': True
                 }
             })
-            
             logger.info(f"Cancelled Wix booking: {appointment_id}")
-            return True
         except Exception as e:
             logger.error(f"Failed to cancel Wix booking {appointment_id}: {e}")
             raise IntegrationError(f"Failed to cancel booking: {e}", platform=self.PLATFORM_NAME)
+        _record_wix_cancellation(appointment_id)
+        return True
     
     def confirm_appointment(self, appointment_id: str) -> Dict:
         """
@@ -427,12 +530,19 @@ class WixBookingsConnector(BaseConnector):
                     'notifyParticipants': True
                 }
             })
-            
+            confirmed = response.get('booking', response)
             logger.info(f"Confirmed Wix booking: {appointment_id}")
-            return response.get('booking', response)
         except Exception as e:
             logger.error(f"Failed to confirm Wix booking {appointment_id}: {e}")
             raise IntegrationError(f"Failed to confirm booking: {e}", platform=self.PLATFORM_NAME)
+        # Wix is already called. A delivery on the confirmed booking is the same transfer a webhook would record.
+        # A cancellation that omits the delivery returns the movement this booking already recorded.
+        response_omits = _wix_update_cancelled(confirmed) and not _names_wix_delivery(confirmed)
+        if not response_omits:
+            _record_named_wix_delivery(confirmed, appointment_id)
+        if response_omits:
+            _record_wix_cancellation(appointment_id)
+        return confirmed
     
     def _map_to_wix_booking(self, appointment_data: Dict) -> Dict:
         """

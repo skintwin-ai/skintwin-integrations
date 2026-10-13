@@ -27,6 +27,891 @@ from ..common.models import (
 
 logger = logging.getLogger(__name__)
 
+# Completing a draft without this argument still tells Shopify the payment is not pending.
+# The ledger settles only when the caller states False.
+_PAYMENT_PENDING_UNSET = object()
+
+
+def _chain_stage():
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import chain_stage
+
+    return chain_stage
+
+
+def _reject_ledger(recorded, label: str):
+    if isinstance(recorded, dict) and recorded.get("ok") is False:
+        raise IntegrationError(recorded.get("error") or f"supply chain rejected the {label}")
+
+
+def _record_shopify_catalog(product):
+    """A created or updated product records the same catalog a webhook would record."""
+    recorded = _chain_stage().record_shopify_catalog(product)
+    _reject_ledger(recorded, "product")
+    return recorded
+
+
+def _sku_text(record):
+    """The sku a record already states. A blank one is absent."""
+    if not isinstance(record, dict):
+        return ""
+    for key in ("sku", "sku_id", "skuId"):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _variant_sku_rows(product):
+    """Variant rows that name a sku. A blank sku is not one."""
+    if not isinstance(product, dict):
+        return []
+    variants = product.get("variants")
+    if not isinstance(variants, list):
+        return []
+    rows = []
+    seen = set()
+    for variant in variants:
+        sku = _sku_text(variant)
+        if not sku or sku in seen:
+            continue
+        seen.add(sku)
+        rows.append(variant)
+    return rows
+
+
+def _variant_formula(variant):
+    """The formula a variant already names. A variant without one has none."""
+    if not isinstance(variant, dict):
+        return None
+    return _chain_stage().formula_id_from_shopify(variant)
+
+
+def _saved_variant_formulas(saved, requested):
+    """Saved variants that name a formula and omit a sku take the sku the request already named.
+
+    A saved variant that names its own sku keeps that sku. A variant with no formula stays unchanged.
+    A request variant that names a different formula does not lend its sku.
+    A product sku fills the only formula variant that omitted its sku when the request names no variant sku.
+    """
+    saved_variants = saved.get("variants")
+    if not isinstance(saved_variants, list) or not saved_variants:
+        return None
+    requested_variants = requested.get("variants") if isinstance(requested.get("variants"), list) else []
+    gaps = [
+        variant
+        for variant in saved_variants
+        if isinstance(variant, dict) and not _sku_text(variant) and _variant_formula(variant)
+    ]
+    product_sku = _sku_text(requested) if len(gaps) == 1 and not _variant_sku_rows(requested) else ""
+    stamped = []
+    changed = False
+    for index, variant in enumerate(saved_variants):
+        if not isinstance(variant, dict) or _sku_text(variant) or not _variant_formula(variant):
+            stamped.append(variant)
+            continue
+        request_variant = requested_variants[index] if index < len(requested_variants) else None
+        if _variant_formula(request_variant) and _variant_formula(request_variant) != _variant_formula(variant):
+            stamped.append(variant)
+            continue
+        sku = _sku_text(request_variant) if isinstance(request_variant, dict) else ""
+        if not sku:
+            sku = product_sku
+        if not sku:
+            stamped.append(variant)
+            continue
+        stamped.append({**variant, "sku": sku})
+        changed = True
+    if not changed:
+        return None
+    return stamped
+
+
+def _stamp_omitted_catalog_skus(saved, requested):
+    """Saved variants that omit a sku take the sku the request named at that index.
+
+    The product formula covers every sku. A saved variant that names its own sku keeps that sku.
+    A blank request sku does not move onto the next variant. A product sku fills the only blank
+    variant when the request names no variant sku. The title is not that sku.
+    """
+    saved_variants = saved.get("variants")
+    if not isinstance(saved_variants, list) or not saved_variants:
+        return None
+    requested_variants = requested.get("variants") if isinstance(requested.get("variants"), list) else []
+    gaps = [variant for variant in saved_variants if isinstance(variant, dict) and not _sku_text(variant)]
+    product_sku = _sku_text(requested) if len(gaps) == 1 and not _variant_sku_rows(requested) else ""
+    stamped = []
+    changed = False
+    for index, variant in enumerate(saved_variants):
+        if not isinstance(variant, dict) or _sku_text(variant):
+            stamped.append(variant)
+            continue
+        request_variant = requested_variants[index] if index < len(requested_variants) else None
+        sku = _sku_text(request_variant) if isinstance(request_variant, dict) else ""
+        if not sku:
+            sku = product_sku
+        if not sku:
+            stamped.append(variant)
+            continue
+        stamped.append({**variant, "sku": sku})
+        changed = True
+    if not changed:
+        return None
+    return stamped
+
+
+def _request_variant_formula(saved_variant, request_variant):
+    """The formula a request variant names for this sku. A different sku does not lend it."""
+    formula = _variant_formula(request_variant)
+    if not formula or not isinstance(request_variant, dict):
+        return None
+    if not _sku_text(saved_variant):
+        return None
+    request_sku = _sku_text(request_variant)
+    if request_sku and request_sku != _sku_text(saved_variant):
+        return None
+    return formula
+
+
+def _stamp_omitted_variant_formulas(saved, requested):
+    """Saved variants that name a sku and omit a formula take the formula the request named at that index.
+
+    A saved variant that names its own formula keeps that formula. A different sku does not lend its formula.
+    A product formula is not copied onto a variant. A blank request formula does not move onto the next variant.
+    """
+    saved_variants = saved.get("variants") if isinstance(saved, dict) else None
+    if not isinstance(saved_variants, list) or not saved_variants:
+        return None
+    requested_variants = requested.get("variants") if isinstance(requested, dict) and isinstance(requested.get("variants"), list) else []
+    stamped = []
+    changed = False
+    for index, variant in enumerate(saved_variants):
+        request_variant = requested_variants[index] if index < len(requested_variants) else None
+        if not isinstance(variant, dict) or _variant_formula(variant):
+            stamped.append(variant)
+            continue
+        formula = _request_variant_formula(variant, request_variant)
+        if not formula:
+            stamped.append(variant)
+            continue
+        stamped.append({**variant, "formulaId": formula})
+        changed = True
+    if not changed:
+        return None
+    return stamped
+
+
+def _catalog_name_field(product):
+    """The title a product already states. A blank title falls through to its name."""
+    if not isinstance(product, dict):
+        return None
+    for key in ("title", "name"):
+        value = product.get(key)
+        if isinstance(value, str) and value.strip():
+            return key, value.strip()
+    return None
+
+
+def _product_names_a_formula(product):
+    """True when the product or one of its variants already names a formula."""
+    stage = _chain_stage()
+    if stage.formula_id_from_shopify(product) is not None:
+        return True
+    variants = product.get("variants") if isinstance(product, dict) and isinstance(product.get("variants"), list) else []
+    return any(isinstance(variant, dict) and stage.formula_id_from_shopify(variant) for variant in variants)
+
+
+def _stamp_omitted_catalog_name(saved, requested):
+    """A saved product that names a formula and omits its title takes the title the request named.
+
+    A present title wins. A blank title falls through to the product name. A product with no formula
+    stays unchanged. A variant title is not the product name.
+    """
+    if not isinstance(saved, dict) or _catalog_name_field(saved) is not None:
+        return saved
+    if not _product_names_a_formula(saved):
+        return saved
+    named = _catalog_name_field(requested)
+    if named is None:
+        return saved
+    key, value = named
+    return {**saved, key: value}
+
+
+def _saved_shopify_product(saved, requested):
+    """A saved product that names a formula and omits skus catalogs the sku the request already named.
+
+    Variant skus win. A product sku is the same named sku when the request has no variant sku.
+    A saved product that names its own sku keeps that sku.
+    A saved variant that names a formula and omits its sku catalogs the sku the request named for that variant.
+    A saved variant that omits its sku, while another variant already names one, takes the request sku at that index.
+    A saved variant that names a sku and omits its formula catalogs the formula the request named for that variant.
+    A saved product that names a formula and omits its title catalogs the title the request named.
+    A product with no formula is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    return _stamp_omitted_catalog_name(_saved_shopify_catalog_fields(saved, requested), requested)
+
+
+def _saved_shopify_catalog_fields(saved, requested):
+    """Copy skus and formulas a saved product omits. The title is applied by the caller."""
+    if _chain_stage().formula_id_from_shopify(saved) is None:
+        variants = _saved_variant_formulas(saved, requested)
+        base = saved if variants is None else {**saved, "variants": variants}
+        formulas = _stamp_omitted_variant_formulas(base, requested)
+        if formulas is None:
+            return base
+        return {**base, "variants": formulas}
+    if _variant_sku_rows(saved):
+        variants = _stamp_omitted_catalog_skus(saved, requested)
+        if variants is None:
+            return saved
+        return {**saved, "variants": variants}
+    if _sku_text(saved):
+        return saved
+    named = _variant_sku_rows(requested)
+    if named:
+        return {**saved, "variants": list(named)}
+    sku = _sku_text(requested)
+    if not sku:
+        return saved
+    return {**saved, "sku": sku}
+
+
+def _record_shopify_order(order):
+    """A created or updated order records the same sale a webhook would record."""
+    recorded = _chain_stage().record_shopify_order_update(order)
+    _reject_ledger(recorded, "order")
+    return recorded
+
+
+def _record_saved_appointment_lines(saved, appointment_data, mapped):
+    """A saved fulfilled order that omits its lines draws the sale the appointment already named.
+
+    The mapper posts a pending order and drops that sale, including a partial refund.
+    A saved sale that omits its id records the id the appointment already named.
+    A saved sale that omits its payment status settles when the appointment already says paid.
+    An appointment that is itself fulfilled was already recorded. An open saved order stays unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(appointment_data, dict):
+        return None
+    if saved is mapped or saved is appointment_data:
+        return None
+    if str(appointment_data.get("fulfillment_status") or "").strip().lower() == "fulfilled":
+        return None
+    known = _stated_order_id(appointment_data)
+    if known is None:
+        known = _stated_order_id(mapped)
+    identified = _saved_shopify_order(saved, known)
+    stamped = _saved_shopify_fulfilled_lines(identified, appointment_data)
+    paid = _saved_shopify_payment(stamped, appointment_data)
+    refunded = _saved_shopify_refunds(paid, appointment_data)
+    if refunded is saved:
+        return None
+    return _record_shopify_order(refunded)
+
+
+def _stated_order_id(order):
+    """The order number a payload already states. A blank one is absent."""
+    if not isinstance(order, dict):
+        return None
+    for key in ("order_number", "name", "id"):
+        value = order.get(key)
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            continue
+        if value:
+            return value
+    return None
+
+
+def _saved_shopify_order(saved, order_id):
+    """A saved sale or cancellation that omits its id returns the sale recorded for the id being saved.
+
+    A saved order that names itself keeps that id. An open saved order is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or order_id is None or _order_names_itself(saved):
+        return saved
+    fulfillment = str(saved.get("fulfillment_status") or "").strip().lower()
+    financial = str(saved.get("financial_status") or "").strip().lower()
+    returned = fulfillment == "restocked" or bool(
+        saved.get("cancelled_at") or saved.get("cancel_reason") or financial in {"refunded", "voided"}
+    )
+    if not returned and fulfillment != "fulfilled":
+        return saved
+    return {**saved, "id": order_id}
+
+
+def _saved_shopify_payment(saved, requested):
+    """A saved fulfilled order that omits its payment status settles when the request already says paid.
+
+    A present financial status wins. An open or returned saved order is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    if str(saved.get("fulfillment_status") or "").strip().lower() != "fulfilled":
+        return saved
+    if _chain_stage()._shopify_returned(saved):
+        return saved
+    if str(saved.get("financial_status") or "").strip():
+        return saved
+    if str(requested.get("financial_status") or "").strip().lower() != "paid":
+        return saved
+    return {**saved, "financial_status": "paid"}
+
+
+def _order_names_a_sale(order):
+    """True when the order names a sale. Invalid lines stay invalid."""
+    stage = _chain_stage()
+    if not isinstance(order, dict):
+        return False
+    probe = dict(order)
+    if not stage._order_label(probe, "order_number", "name", "id"):
+        probe["id"] = "named"
+    try:
+        return bool(stage.shopify_fulfillment_commands(probe))
+    except stage.StageRejection:
+        return None
+
+
+def _order_lines(order):
+    """The line list an order already states. A missing list is none."""
+    if not isinstance(order, dict):
+        return None
+    if isinstance(order.get("line_items"), list):
+        return order.get("line_items")
+    if isinstance(order.get("items"), list):
+        return order.get("items")
+    return None
+
+
+def _sale_line_state(order, item):
+    """True when the line names a sale. None when the line is present but invalid."""
+    if not isinstance(item, dict):
+        return False
+    stage = _chain_stage()
+    probe = {"id": "named", "line_items": [item]}
+    notes = order.get("note_attributes") if isinstance(order, dict) else None
+    if notes is not None:
+        probe["note_attributes"] = notes
+    try:
+        return bool(stage.shopify_fulfillment_commands(probe))
+    except stage.StageRejection:
+        return None
+
+
+def _skus_conflict(saved_line, request_line):
+    """A saved sku that differs from the request sku does not take the request's quantity."""
+    saved_sku = _sku_text(saved_line)
+    request_sku = _sku_text(request_line)
+    return bool(saved_sku and request_sku and saved_sku != request_sku)
+
+
+def _resolved_sale_fields(order, item):
+    stage = _chain_stage()
+    defaults = stage._order_line_defaults(order) if isinstance(order, dict) else {}
+    if not isinstance(item, dict):
+        return None, None, None, None
+    return stage._shopify_line(item, defaults)
+
+
+def _stated_price(item):
+    """A price the line already states. A blank one is absent."""
+    if not isinstance(item, dict):
+        return None
+    price = item.get("price")
+    if price is None or (isinstance(price, str) and not price.strip()):
+        return None
+    return price
+
+
+def _request_line_price(saved_line, request_line):
+    """The price a request line names for this sku. A different sku does not lend it."""
+    price = _stated_price(request_line)
+    if price is None or not isinstance(request_line, dict):
+        return None
+    saved_sku = _sku_text(saved_line)
+    request_sku = _sku_text(request_line)
+    if saved_sku:
+        if request_sku != saved_sku:
+            return None
+        return price
+    if not request_sku:
+        return None
+    return price
+
+
+def _stamp_sale_line(saved_line, request_line, saved_order, requested_order):
+    """Copy the sku, quantity, and price a saved line omits from the request line at that index.
+
+    A saved line that already names a sale keeps its quantity. A missing price still comes from the
+    request line with the same sku. A different sku does not lend its quantity or its price.
+    """
+    if not isinstance(saved_line, dict) or not isinstance(request_line, dict):
+        return saved_line
+    if _skus_conflict(saved_line, request_line):
+        return saved_line
+    price = _request_line_price(saved_line, request_line)
+    if _sale_line_state(saved_order, saved_line) is True:
+        if price is None or _stated_price(saved_line) is not None:
+            return saved_line
+        return {**saved_line, "price": price}
+    if _sale_line_state(requested_order, request_line) is not True:
+        return saved_line
+    saved_location, saved_milligrams, saved_kind, saved_practitioner = _resolved_sale_fields(
+        saved_order, saved_line
+    )
+    request_location, request_milligrams, request_kind, request_practitioner = _resolved_sale_fields(
+        requested_order, request_line
+    )
+    stamped = dict(saved_line)
+    changed = False
+    if not _sku_text(stamped):
+        sku = _sku_text(request_line)
+        if sku:
+            stamped["sku"] = sku
+            changed = True
+    if saved_location is None and isinstance(request_location, str) and request_location.strip():
+        stamped["location"] = request_location.strip()
+        changed = True
+    if saved_milligrams is None and request_milligrams is not None:
+        stamped["milligrams"] = request_milligrams
+        changed = True
+    if not saved_kind and request_kind:
+        stamped["kind"] = request_kind
+        changed = True
+    if not saved_practitioner and request_practitioner:
+        stamped["practitioner_id"] = request_practitioner
+        changed = True
+    if _stated_price(stamped) is None and price is not None:
+        stamped["price"] = price
+        changed = True
+    if not changed:
+        return saved_line
+    return stamped
+
+
+def _stamp_omitted_sale_lines(saved, requested):
+    """Saved lines that omit a sku or quantity take that identity from the same request line.
+
+    A saved line that names its own sale stays. A blank request sku does not move onto another line.
+    """
+    saved_lines = _order_lines(saved)
+    requested_lines = _order_lines(requested)
+    if not saved_lines or not isinstance(requested_lines, list):
+        return None
+    stamped = []
+    changed = False
+    for index, line in enumerate(saved_lines):
+        request_line = requested_lines[index] if index < len(requested_lines) else None
+        next_line = _stamp_sale_line(line, request_line, saved, requested)
+        if next_line is not line:
+            changed = True
+        stamped.append(next_line)
+    if not changed:
+        return None
+    return stamped
+
+
+def _saved_shopify_fulfilled_lines(saved, requested):
+    """A saved fulfilled order that omits its sale lines draws the lines the request already named.
+
+    A saved line that already names a sale keeps that line. A saved line that omits its sku or quantity
+    takes them from the request line at that index. An open or returned order is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    if str(saved.get("fulfillment_status") or "").strip().lower() != "fulfilled":
+        return saved
+    stage = _chain_stage()
+    if stage._shopify_returned(saved):
+        return saved
+    if _order_names_a_sale(saved) is not False:
+        lines = _stamp_omitted_sale_lines(saved, requested)
+        if lines is None:
+            return saved
+        return {**saved, "line_items": lines}
+    if _order_names_a_sale(requested) is not True:
+        return saved
+    lines = requested.get("line_items")
+    if lines is None:
+        lines = requested.get("items")
+    if not isinstance(lines, list) or not lines:
+        return saved
+    stamped = {**saved, "line_items": list(lines)}
+    if not saved.get("note_attributes") and requested.get("note_attributes"):
+        stamped["note_attributes"] = requested.get("note_attributes")
+    return stamped
+
+
+def _saved_refund_lines(order) -> list:
+    """Refund lines a saved order already states. A missing list is none."""
+    if not isinstance(order, dict):
+        return []
+    refunds = order.get("refunds")
+    if not isinstance(refunds, list):
+        return []
+    lines = []
+    for refund in refunds:
+        if not isinstance(refund, dict):
+            continue
+        items = refund.get("refund_line_items")
+        if isinstance(items, list):
+            lines.extend(items)
+    return lines
+
+
+def _stated_refund_id(value) -> bool:
+    if isinstance(value, bool) or value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def _refund_line_names_sale(line) -> bool:
+    """True when a refund line already names a sku or a line id."""
+    if not isinstance(line, dict):
+        return False
+    if _stated_refund_id(line.get("line_item_id")) or _sku_text(line):
+        return True
+    item = line.get("line_item")
+    return isinstance(item, dict) and (_stated_refund_id(item.get("id")) or bool(_sku_text(item)))
+
+
+def _merge_refund_identity(saved_line, request_line):
+    """Copy the sku and line id the request names onto a saved line that omits them.
+
+    The saved quantity stays. A saved line that already names a sale stays as written.
+    """
+    if not isinstance(saved_line, dict) or _refund_line_names_sale(saved_line):
+        return saved_line
+    if not isinstance(request_line, dict) or not _refund_line_names_sale(request_line):
+        return saved_line
+    merged = dict(saved_line)
+    if not _stated_refund_id(merged.get("line_item_id")) and _stated_refund_id(request_line.get("line_item_id")):
+        merged["line_item_id"] = request_line["line_item_id"]
+    requested_item = request_line.get("line_item") if isinstance(request_line.get("line_item"), dict) else None
+    item = dict(merged["line_item"]) if isinstance(merged.get("line_item"), dict) else {}
+    if requested_item is not None:
+        if not _stated_refund_id(item.get("id")) and _stated_refund_id(requested_item.get("id")):
+            item["id"] = requested_item["id"]
+        if not _sku_text(item) and _sku_text(requested_item):
+            item["sku"] = _sku_text(requested_item)
+    if not _sku_text(item) and _sku_text(request_line):
+        item["sku"] = _sku_text(request_line)
+    if item:
+        merged["line_item"] = item
+    if merged == saved_line:
+        return saved_line
+    return merged
+
+
+def _refunds_with_request_identity(saved, requested):
+    """Saved refund lines that omit a sku or line id gain the identity the request already named."""
+    request_lines = _saved_refund_lines(requested)
+    refunds = saved.get("refunds")
+    if not isinstance(refunds, list) or not request_lines:
+        return None
+    cursor = 0
+    changed = False
+    rebuilt = []
+    for refund in refunds:
+        if not isinstance(refund, dict):
+            rebuilt.append(refund)
+            continue
+        items = refund.get("refund_line_items")
+        if not isinstance(items, list):
+            rebuilt.append(refund)
+            continue
+        merged_items = []
+        for line in items:
+            request_line = request_lines[cursor] if cursor < len(request_lines) else None
+            cursor += 1
+            merged = _merge_refund_identity(line, request_line)
+            if merged is not line:
+                changed = True
+            merged_items.append(merged)
+        rebuilt.append({**refund, "refund_line_items": merged_items})
+    if not changed:
+        return None
+    return rebuilt
+
+
+def _request_names_partial_refund(requested) -> bool:
+    """True when the request already says this sale was partly refunded.
+
+    A present financial status wins. Refund lines count when that status is omitted.
+    """
+    if not isinstance(requested, dict):
+        return False
+    status = str(requested.get("financial_status") or "").strip().lower()
+    if status:
+        return status == "partially_refunded"
+    return bool(_saved_refund_lines(requested))
+
+
+def _saved_shopify_refunds(saved, requested):
+    """A saved partial refund that omits its refund lines returns the sale the request already named.
+
+    A saved order that omits its partial refund returns that sale when the request already says so.
+    A saved refund line that omits its sku or line id uses the identity the request already named, and keeps its quantity.
+    A saved refund that names its own lines keeps those lines. An open saved order stays unchanged.
+    A present financial status wins. A return already recorded for a different sale stays that return.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    if str(saved.get("fulfillment_status") or "").strip().lower() != "fulfilled":
+        return saved
+    stage = _chain_stage()
+    if stage._shopify_returned(saved):
+        return saved
+    original = saved
+    financial = str(saved.get("financial_status") or "").strip().lower()
+    stamped_status = False
+    if not financial and _request_names_partial_refund(requested):
+        saved = {**saved, "financial_status": "partially_refunded"}
+        financial = "partially_refunded"
+        stamped_status = True
+    if financial != "partially_refunded":
+        return original
+    refunds = saved.get("refunds")
+    if refunds is not None and not isinstance(refunds, list):
+        return original
+    if not _saved_refund_lines(saved):
+        requested_refunds = requested.get("refunds")
+        if not isinstance(requested_refunds, list) or not requested_refunds:
+            return original
+        stamped = {**saved, "refunds": list(requested_refunds)}
+    else:
+        enriched = _refunds_with_request_identity(saved, requested)
+        if not enriched:
+            stamped = saved
+        else:
+            stamped = {**saved, "refunds": enriched}
+    try:
+        named = stage.shopify_refunded_line_commands(stamped)
+    except stage.StageRejection:
+        return original
+    if not named:
+        return original
+    if stamped_status:
+        try:
+            commands = stage.shopify_order_update_commands(stamped)
+        except stage.StageRejection:
+            return original
+        if not any(command.get("command") == "return_sale" for command in commands):
+            return original
+        if stage._unrecorded(commands) is None:
+            return original
+    elif stamped is original:
+        return original
+    return stamped
+
+
+def _draft_names_itself(draft) -> bool:
+    if not isinstance(draft, dict):
+        return False
+    for key in ("order_id", "name", "id"):
+        value = draft.get(key)
+        if isinstance(value, str):
+            if value.strip():
+                return True
+            continue
+        if value:
+            return True
+    return False
+
+
+def _draft_names_a_priced_sale(draft) -> bool:
+    """True when every line this completed draft would draw also names a price."""
+    stage = _chain_stage()
+    if not isinstance(draft, dict):
+        return False
+    order = {
+        "order_number": stage._order_label(draft, "order_id", "name", "id") or "named",
+        "line_items": draft.get("line_items") or [],
+        "note_attributes": draft.get("note_attributes") or [],
+    }
+    try:
+        fulfillments = stage.shopify_fulfillment_commands(order)
+    except stage.StageRejection:
+        return False
+    return bool(stage._draft_settlements(order, fulfillments))
+
+
+def _completed_draft_payment(draft):
+    """A completed draft that omits its payment settles when this completion says it is paid.
+
+    A present financial status wins, including an explicit unpaid flag. A draft that does not
+    name a price stays a sale. An open draft is unchanged.
+    """
+    if not isinstance(draft, dict):
+        return draft
+    if str(draft.get("status") or "").strip().lower() != "completed":
+        return draft
+    if str(draft.get("financial_status") or "").strip():
+        return draft
+    if draft.get("paid") is True or draft.get("paid") is False:
+        return draft
+    if not _draft_names_a_priced_sale(draft):
+        return draft
+    return {**draft, "financial_status": "paid"}
+
+
+def _record_shopify_draft(draft):
+    """A completed draft records the same sale a webhook would record."""
+    recorded = _chain_stage().record_draft_order(draft)
+    _reject_ledger(recorded, "draft")
+    return recorded
+
+
+def _draft_label(draft):
+    """The order id a draft already states. A blank one is absent."""
+    if not isinstance(draft, dict):
+        return None
+    for key in ("order_id", "name", "id"):
+        value = draft.get(key)
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            continue
+        if value and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _saved_shopify_draft(saved, requested):
+    """A completed draft that omits its id records the sale under the id the request already states.
+
+    A saved draft that names itself keeps that id. An open saved draft is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or _draft_names_itself(saved):
+        return saved
+    if str(saved.get("status") or "").strip().lower() != "completed":
+        return saved
+    known = _draft_label(requested)
+    if known is None:
+        return saved
+    return {**saved, "id": known}
+
+
+def _draft_names_a_sale(draft):
+    """True when the draft names a completed sale. Invalid lines stay invalid."""
+    stage = _chain_stage()
+    if not isinstance(draft, dict):
+        return False
+    probe = dict(draft)
+    if str(probe.get("status") or "").strip().lower() != "completed":
+        probe["status"] = "completed"
+    if not stage._order_label(probe, "order_id", "name", "id"):
+        probe["id"] = "named"
+    try:
+        return bool(stage.draft_order_commands(probe))
+    except stage.StageRejection:
+        return None
+
+
+def _draft_request_paid(draft) -> bool:
+    """True when the request already says this draft is paid."""
+    if not isinstance(draft, dict):
+        return False
+    return _chain_stage()._draft_payment_named(draft)
+
+
+def _saved_shopify_draft_payment(saved, requested):
+    """A completed draft that omits its payment settles when the request already says paid.
+
+    A present financial status wins, including pending. An explicit unpaid flag wins.
+    A draft that does not name a price stays a sale. An open draft is unchanged.
+    A payment already recorded at a different amount stays that amount.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    if str(saved.get("status") or "").strip().lower() != "completed":
+        return saved
+    if str(saved.get("financial_status") or "").strip():
+        return saved
+    if saved.get("paid") is True or saved.get("paid") is False:
+        return saved
+    if not _draft_request_paid(requested):
+        return saved
+    stamped = {**saved, "financial_status": "paid"}
+    stage = _chain_stage()
+    try:
+        commands = stage.draft_order_commands(stamped)
+    except stage.StageRejection:
+        return saved
+    if not any(command.get("command") == "settle" for command in commands):
+        return saved
+    if stage._unrecorded(commands) is None:
+        return saved
+    return stamped
+
+
+def _saved_shopify_draft_lines(saved, requested):
+    """A completed draft that omits its sale lines draws the lines the request already named.
+
+    A saved line that already names a sale keeps that line. A saved line that omits its sku or quantity
+    takes them from the request line at that index. An open draft is recorded unchanged.
+    """
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return saved
+    if str(saved.get("status") or "").strip().lower() != "completed":
+        return saved
+    if _draft_names_a_sale(saved) is not False:
+        lines = _stamp_omitted_sale_lines(saved, requested)
+        if lines is None:
+            return saved
+        return {**saved, "line_items": lines}
+    if _draft_names_a_sale(requested) is not True:
+        return saved
+    lines = requested.get("line_items")
+    if lines is None:
+        lines = requested.get("items")
+    if not isinstance(lines, list) or not lines:
+        return saved
+    stamped = {**saved, "line_items": list(lines)}
+    if not saved.get("note_attributes") and requested.get("note_attributes"):
+        stamped["note_attributes"] = requested.get("note_attributes")
+    return stamped
+
+
+def _order_names_itself(order) -> bool:
+    if not isinstance(order, dict):
+        return False
+    for key in ("order_number", "name", "id"):
+        value = order.get(key)
+        if isinstance(value, str):
+            if value.strip():
+                return True
+            continue
+        if value:
+            return True
+    return False
+
+
+def _record_shopify_return(order, order_id=None):
+    """A cancelled order records the same return a webhook would record."""
+    if not isinstance(order, dict):
+        order = {}
+    else:
+        order = dict(order)
+    if order_id is not None and not _order_names_itself(order):
+        order["id"] = order_id
+    recorded = _chain_stage().record_shopify_returns(order)
+    _reject_ledger(recorded, "return")
+    return recorded
+
 
 class ShopifyB2BConnector(BaseConnector):
     """
@@ -223,8 +1108,12 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Created product data
         """
+        _record_shopify_catalog(product_data)
         response = self.post(self.ENDPOINTS['products'], {'product': product_data})
-        return response.get('product', response)
+        saved = response.get('product', response)
+        if saved is not product_data:
+            _record_shopify_catalog(_saved_shopify_product(saved, product_data))
+        return saved
     
     def update_product(self, product_id: int, product_data: Dict) -> Dict[str, Any]:
         """
@@ -237,9 +1126,13 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Updated product data
         """
+        _record_shopify_catalog(product_data)
         endpoint = self.ENDPOINTS['product'].format(id=product_id)
         response = self.put(endpoint, {'product': product_data})
-        return response.get('product', response)
+        saved = response.get('product', response)
+        if saved is not product_data:
+            _record_shopify_catalog(_saved_shopify_product(saved, product_data))
+        return saved
     
     def delete_product(self, product_id: int) -> bool:
         """
@@ -309,8 +1202,15 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Created order data
         """
+        _record_shopify_order(order_data)
         response = self.post(self.ENDPOINTS['orders'], {'order': order_data})
-        return response.get('order', response)
+        saved = response.get('order', response)
+        if saved is not order_data:
+            recorded = _saved_shopify_order(saved, _stated_order_id(order_data))
+            recorded = _saved_shopify_fulfilled_lines(recorded, order_data)
+            recorded = _saved_shopify_payment(recorded, order_data)
+            _record_shopify_order(_saved_shopify_refunds(recorded, order_data))
+        return saved
     
     def update_order(self, order_id: int, order_data: Dict) -> Dict[str, Any]:
         """
@@ -323,9 +1223,16 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Updated order data
         """
+        _record_shopify_order(order_data)
         endpoint = self.ENDPOINTS['order'].format(id=order_id)
         response = self.put(endpoint, {'order': order_data})
-        return response.get('order', response)
+        saved = response.get('order', response)
+        if saved is not order_data:
+            recorded = _saved_shopify_order(saved, order_id)
+            recorded = _saved_shopify_fulfilled_lines(recorded, order_data)
+            recorded = _saved_shopify_payment(recorded, order_data)
+            _record_shopify_order(_saved_shopify_refunds(recorded, order_data))
+        return saved
     
     def cancel_order(self, order_id: int, reason: str = "other") -> Dict[str, Any]:
         """
@@ -340,7 +1247,9 @@ class ShopifyB2BConnector(BaseConnector):
         """
         endpoint = f"orders/{order_id}/cancel.json"
         response = self.post(endpoint, {'reason': reason})
-        return response.get('order', response)
+        order = response.get('order', response) if isinstance(response, dict) else {}
+        _record_shopify_return(order, order_id)
+        return order if isinstance(order, dict) else response
     
     # ==================== Customer Operations ====================
     
@@ -655,11 +1564,17 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Created draft order data
         """
+        _record_shopify_draft(draft_order_data)
         response = self.post(
             self.ENDPOINTS['draft_orders'],
             {'draft_order': draft_order_data}
         )
-        return response.get('draft_order', response)
+        saved = response.get('draft_order', response)
+        if saved is not draft_order_data:
+            recorded = _saved_shopify_draft(saved, draft_order_data)
+            recorded = _saved_shopify_draft_lines(recorded, draft_order_data)
+            _record_shopify_draft(_saved_shopify_draft_payment(recorded, draft_order_data))
+        return saved
     
     def send_draft_order_invoice(
         self,
@@ -696,21 +1611,31 @@ class ShopifyB2BConnector(BaseConnector):
     def complete_draft_order(
         self,
         draft_order_id: int,
-        payment_pending: bool = False
+        payment_pending: Any = _PAYMENT_PENDING_UNSET
     ) -> Dict[str, Any]:
         """
         Complete a draft order (convert to order).
         
         Args:
             draft_order_id: Draft order ID
-            payment_pending: Whether payment is pending
+            payment_pending: Whether payment is pending. Omit it and Shopify is told the
+                payment is not pending, while the ledger settles only when the caller
+                states False and the completed draft names a price.
             
         Returns:
             Dict: Completed order data
         """
+        pending = False if payment_pending is _PAYMENT_PENDING_UNSET else bool(payment_pending)
         endpoint = f"draft_orders/{draft_order_id}/complete.json"
-        response = self.put(endpoint, {'payment_pending': payment_pending})
-        return response.get('draft_order', response)
+        response = self.put(endpoint, {'payment_pending': pending})
+        draft = response.get('draft_order', response) if isinstance(response, dict) else {}
+        if isinstance(draft, dict) and not _draft_names_itself(draft):
+            draft = dict(draft)
+            if draft_order_id is not None:
+                draft["id"] = draft_order_id
+        recorded = _completed_draft_payment(draft) if payment_pending is False else draft
+        _record_shopify_draft(recorded)
+        return draft
     
     # ==================== Webhook Operations ====================
     
@@ -810,9 +1735,16 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Created order data
         """
-        # Map appointment data to Shopify order format
+        # The mapper posts a pending order and drops a sale this payload already names.
+        _record_shopify_order(appointment_data)
         order_data = self._map_appointment_to_order(appointment_data)
-        return self.create_order(order_data)
+        # A saved cancellation that omits its id still belongs to the order this appointment names.
+        known = _stated_order_id(appointment_data)
+        if known is not None and _stated_order_id(order_data) is None:
+            order_data = {**order_data, "id": known}
+        saved = self.create_order(order_data)
+        _record_saved_appointment_lines(saved, appointment_data, order_data)
+        return saved
     
     def update_appointment(self, appointment_id: str, appointment_data: Dict) -> Dict:
         """
@@ -825,8 +1757,13 @@ class ShopifyB2BConnector(BaseConnector):
         Returns:
             Dict: Updated order data
         """
+        _record_shopify_order(appointment_data)
         order_data = self._map_appointment_to_order(appointment_data)
-        return self.update_order(int(appointment_id), order_data)
+        if _stated_order_id(order_data) is None and appointment_id not in (None, ""):
+            order_data = {**order_data, "id": appointment_id}
+        saved = self.update_order(int(appointment_id), order_data)
+        _record_saved_appointment_lines(saved, appointment_data, order_data)
+        return saved
     
     def cancel_appointment(self, appointment_id: str) -> bool:
         """

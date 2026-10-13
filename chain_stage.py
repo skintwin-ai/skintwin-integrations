@@ -25,32 +25,170 @@ def settle(args: dict) -> dict:
     }
 
 
+def _settled_fulfillment(settlement_id: str) -> str:
+    """The sale recorded for this settlement. Two different sales are not one return."""
+    if not settlement_id:
+        return ""
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw or not Path(raw).is_file():
+        return ""
+    found = ""
+    for line in Path(raw).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "settle":
+            continue
+        args = record.get("args") or {}
+        if args.get("settlement_id") != settlement_id:
+            continue
+        fulfillment_id = args.get("fulfillment_id")
+        if not isinstance(fulfillment_id, str) or not fulfillment_id:
+            continue
+        if found and found != fulfillment_id:
+            return ""
+        found = fulfillment_id
+    return found
+
+
+def return_for_refund(data: dict) -> tuple[dict, int] | None:
+    """Return a sale when a refund names the fulfillment it closes.
+
+    A refund that names a settlement, or only the payment intent, returns the sale
+    that settlement recorded. A named fulfillment still wins. A settlement that is
+    not on the ledger stays off and does not fall through to the payment intent.
+    """
+    if not isinstance(data, dict):
+        return None
+    fulfillment_id = _named(data, "fulfillment_id", "fulfillmentId")
+    settlement_id = _named(data, "settlement_id", "settlementId")
+    if not fulfillment_id and settlement_id:
+        fulfillment_id = _settled_fulfillment(settlement_id)
+        if not fulfillment_id:
+            return None
+    if not fulfillment_id:
+        processor_id = _named(data, "payment_intent_id", "paymentIntentId") or _named(
+            data, "processor_payment_id", "processorPaymentId"
+        )
+        if processor_id:
+            fulfillment_id = _settled_fulfillment(f"pay-{processor_id}")
+    if not fulfillment_id:
+        return None
+    return_key = _named(data, "return_key", "returnKey")
+    return_id = _named(data, "return_id", "returnId") or (
+        f"return:{return_key}:{fulfillment_id}" if return_key else f"return:{fulfillment_id}"
+    )
+    try:
+        artifact = {
+            "return_id": _text(return_id, "return_id"),
+            "fulfillment_id": _text(fulfillment_id, "fulfillment_id"),
+        }
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}, 400
+    if not os.environ.get("SKINTWIN_CHAIN_LEDGER"):
+        return {"ok": True, "artifact": artifact}, 200
+    locator = _locator()
+    if locator is None:
+        return {"ok": False, "error": "supply-chain hub is not present"}, 400
+    error = locator.commit_commands([{"command": "return_sale", "args": artifact}])
+    if error:
+        return {"ok": False, "error": error}, 400
+    return {"ok": True, "artifact": artifact}, 200
+
+
+def paystack_settlement(transaction: dict) -> dict | None:
+    """A verified Paystack charge settles when its metadata names a fulfillment.
+
+    Paystack's amount is already in minor units.
+    """
+    if not isinstance(transaction, dict):
+        return None
+    data = transaction.get("data") if isinstance(transaction.get("data"), dict) else transaction
+    if not isinstance(data, dict):
+        return None
+    metadata = data.get("metadata") if data.get("metadata") is not None else {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    fulfillment_id = _named(metadata, "fulfillment_id", "fulfillmentId") or _named(
+        data, "fulfillment_id", "fulfillmentId"
+    )
+    if not fulfillment_id:
+        return None
+    reference = _order_label(data, "reference", "id") or fulfillment_id
+    settlement_id = (
+        _named(metadata, "settlement_id", "settlementId")
+        or _named(data, "settlement_id", "settlementId")
+        or f"pay-{reference}"
+    )
+    amount = data.get("amount")
+    if isinstance(amount, str) and amount.strip():
+        try:
+            amount = int(amount.strip()) if amount.strip().isdigit() else float(amount.strip())
+        except ValueError:
+            return None
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        return None
+    cents = int(amount) if isinstance(amount, int) else int(round(float(amount)))
+    if cents < 1:
+        return None
+    currency = _currency_text(data.get("currency")) or _currency_text(metadata.get("currency")) or "NGN"
+    return {
+        "fulfillment_id": fulfillment_id.strip(),
+        "settlement_id": settlement_id.strip(),
+        "amount_cents": cents,
+        "currency": currency,
+    }
+
+
+def record_paystack_settlement(transaction: dict) -> tuple[dict, int] | None:
+    payment = paystack_settlement(transaction)
+    if payment is None:
+        return None
+    return settlement_for_payment(payment)
+
+
 def settlement_for_payment(data: dict) -> tuple[dict, int] | None:
     """Settle a payment that names a fulfillment before the processor runs."""
-    if not isinstance(data, dict) or not data.get("fulfillment_id"):
+    if not isinstance(data, dict):
+        return None
+    fulfillment_id = _named(data, "fulfillment_id", "fulfillmentId")
+    if not fulfillment_id:
         return None
     try:
         cents = _cents(data)
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}, 400
+    settlement_id = _named(data, "settlement_id", "settlementId") or f"pay-{fulfillment_id}"
     return respond(
         {
             "command": "settle",
             "args": {
-                "settlement_id": data.get("settlement_id") or "",
-                "fulfillment_id": data.get("fulfillment_id") or "",
+                "settlement_id": settlement_id,
+                "fulfillment_id": fulfillment_id,
                 "amount_cents": cents,
-                "currency": data.get("currency") or "USD",
+                "currency": _currency_text(data.get("currency")) or "USD",
             },
         }
     )
 
 
 def _cents(data: dict) -> int:
-    amount_cents = data.get("amount_cents")
+    """A whole cent string is already minor units. A numeric amount is major units."""
+    amount_cents = _whole_count(data.get("amount_cents"))
     if isinstance(amount_cents, int) and not isinstance(amount_cents, bool):
         return amount_cents
     amount = data.get("amount")
+    if isinstance(amount, str):
+        text = amount.strip()
+        try:
+            amount = float(text) if text else None
+        except ValueError:
+            amount = None
     if isinstance(amount, bool) or not isinstance(amount, (int, float)):
         raise StageRejection("amount_cents is required")
     cents = int(round(float(amount) * 100))
@@ -60,13 +198,41 @@ def _cents(data: dict) -> int:
 
 
 def respond(body: dict) -> tuple[dict, int]:
+    commands = body.get("commands")
+    if isinstance(commands, list):
+        return _respond_many(commands)
     if body.get("command") != "settle":
         return {"ok": False, "error": f"unknown command {body.get('command')}"}, 400
     try:
         artifact = settle(body.get("args") or {})
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}, 400
-    return _commit(body, ({"ok": True, "artifact": artifact}, 200))
+    return _commit({"command": "settle", "args": artifact}, ({"ok": True, "artifact": artifact}, 200))
+
+
+def _respond_many(commands: list) -> tuple[dict, int]:
+    """Several settlements of one invoice are one ledger write."""
+    accepted = []
+    try:
+        for command in commands:
+            if not isinstance(command, dict) or command.get("command") != "settle":
+                name = command.get("command") if isinstance(command, dict) else command
+                return {"ok": False, "error": f"unknown command {name}"}, 400
+            artifact = settle(command.get("args") or {})
+            accepted.append({"command": "settle", "args": artifact})
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}, 400
+    if not accepted or os.environ.get("SKINTWIN_CHAIN_SKIP_DISPATCH") == "1":
+        return {"ok": True, "artifact": accepted, "count": len(accepted)}, 200
+    if not os.environ.get("SKINTWIN_CHAIN_LEDGER"):
+        return {"ok": True, "artifact": accepted, "count": len(accepted)}, 200
+    locator = _locator()
+    if locator is None:
+        return {"ok": False, "error": "supply-chain hub is not present"}, 400
+    error = locator.commit_commands(accepted)
+    if error:
+        return {"ok": False, "error": error}, 400
+    return {"ok": True, "artifact": accepted, "count": len(accepted)}, 200
 
 
 def _text(value: object, label: str) -> str:
@@ -75,7 +241,15 @@ def _text(value: object, label: str) -> str:
     return value.strip()
 
 
+def _whole_count(value: object) -> object:
+    """A digit string is that integer. Anything else is left as written."""
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return value
+
+
 def _positive(value: object, label: str) -> int:
+    value = _whole_count(value)
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise StageRejection(f"{label} must be a positive integer")
     return value
@@ -93,6 +267,1208 @@ def _commit(request: dict, result: tuple[dict, int]) -> tuple[dict, int]:
     if error:
         return {"ok": False, "error": error}, 400
     return result
+
+
+def formula_id_from_shopify(product: dict) -> str | None:
+    if not isinstance(product, dict):
+        return None
+    direct = _named(product, "formulaId", "formula_id")
+    if direct:
+        return direct
+    metafields = product.get("metafields")
+    if isinstance(metafields, list):
+        for field in metafields:
+            if not isinstance(field, dict):
+                continue
+            if field.get("key") not in ("formula_id", "formulaId"):
+                continue
+            value = field.get("value")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    tags = product.get("tags")
+    if isinstance(tags, str):
+        tags = tags.split(",")
+    if not isinstance(tags, list):
+        return None
+    for tag in tags:
+        value = str(tag).strip()
+        marker = "formula:"
+        if value.lower().startswith(marker):
+            formula = value[len(marker) :].strip()
+            if formula:
+                return formula
+    return None
+
+
+def _named(record: object, *keys: str) -> str:
+    """The first non-blank string wins. A blank value falls through to the next key."""
+    if not isinstance(record, dict):
+        return ""
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _currency_text(value: object) -> str:
+    """A blank currency is absent. A present code is kept as written."""
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return ""
+
+
+def _order_label(record: object, *keys: str) -> str:
+    """A present order number wins. A blank one falls through to the next name."""
+    if not isinstance(record, dict):
+        return ""
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            continue
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _named_sku(record: object) -> str:
+    return _named(record, "sku", "sku_id", "skuId")
+
+
+def _catalog_skus(product: dict, name: str) -> list[str]:
+    """Each variant that names a sku is its own catalog entry. A blank sku is not one."""
+    variants = product.get("variants") if isinstance(product.get("variants"), list) else []
+    skus: list[str] = []
+    seen: set[str] = set()
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        sku = _named_sku(variant)
+        if not sku or sku in seen:
+            continue
+        seen.add(sku)
+        skus.append(sku)
+    if skus:
+        return skus
+    return [_text(_named_sku(product) or name, "sku")]
+
+
+def _catalog_name(product: dict) -> str:
+    """A present title wins. A blank title falls through to the product name."""
+    return _text(_named(product, "title", "name"), "name")
+
+
+def shopify_catalog_commands(product: dict) -> list[dict]:
+    if not isinstance(product, dict):
+        return []
+    formula_id = formula_id_from_shopify(product)
+    if formula_id is not None:
+        name = _catalog_name(product)
+        return [
+            {
+                "command": "catalog_sku",
+                "args": {"sku_id": sku, "formula_id": formula_id, "name": name},
+            }
+            for sku in _catalog_skus(product, name)
+        ]
+    named: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    variants = product.get("variants") if isinstance(product.get("variants"), list) else []
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        sku = _named_sku(variant)
+        if not sku or sku in seen:
+            continue
+        variant_formula = formula_id_from_shopify(variant)
+        if variant_formula is None:
+            continue
+        seen.add(sku)
+        named.append((sku, variant_formula))
+    if not named:
+        return []
+    name = _catalog_name(product)
+    return [
+        {
+            "command": "catalog_sku",
+            "args": {"sku_id": sku, "formula_id": variant_formula, "name": name},
+        }
+        for sku, variant_formula in named
+    ]
+
+
+def _draft_payment_named(draft: dict) -> bool:
+    """A present financial status wins. paid is the payment when that status is absent."""
+    financial = str(draft.get("financial_status") or "").strip().lower()
+    if financial:
+        return financial == "paid"
+    return draft.get("paid") is True
+
+
+def _draft_settlements(order: dict, fulfillments: list[dict]) -> list[dict]:
+    """Settle a paid draft only when every drawn line names a price.
+
+    A missing or unusable price leaves the sale drawn and unsettled.
+    """
+    if not fulfillments:
+        return []
+    try:
+        settlements = shopify_settlement_commands(order)
+    except StageRejection:
+        return []
+    if len(settlements) != len(fulfillments):
+        return []
+    return settlements
+
+
+def draft_order_commands(draft: dict) -> list[dict]:
+    """A completed B2B draft is an outlet sale. Open and invoiced drafts are not.
+
+    A completed draft that names a payment settles that sale when every drawn line names a price.
+    A present financial status wins. A draft that does not name a price stays a sale.
+    """
+    if not isinstance(draft, dict):
+        raise StageRejection("draft order is required")
+    status = str(draft.get("status") or "").strip().lower()
+    if status != "completed":
+        return []
+    order_number = _order_label(draft, "order_id", "name", "id")
+    order = {
+        "order_number": order_number,
+        "line_items": draft.get("line_items") or [],
+        "note_attributes": draft.get("note_attributes") or [],
+    }
+    currency = _currency_text(draft.get("currency"))
+    if currency:
+        order["currency"] = currency
+    commands = shopify_fulfillment_commands(order)
+    if _draft_payment_named(draft):
+        commands.extend(_draft_settlements(order, commands))
+    return commands
+
+
+def _sale_lines(order: dict) -> object:
+    """A present line_items list wins. A missing one falls through to appointment items."""
+    if not isinstance(order, dict):
+        return []
+    if order.get("line_items") is not None:
+        return order.get("line_items")
+    if order.get("items") is not None:
+        return order.get("items")
+    return []
+
+
+def _opencart_lines(order: dict) -> object:
+    """A present products list wins, then line_items, then the cart items."""
+    if not isinstance(order, dict):
+        return []
+    for key in ("products", "line_items", "items"):
+        if order.get(key) is not None:
+            return order.get(key)
+    return []
+
+
+def shopify_fulfillment_commands(order: dict) -> list[dict]:
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    order_id = _text(_order_label(order, "order_number", "name", "id"), "order number")
+    items = _sale_lines(order)
+    if not isinstance(items, list):
+        raise StageRejection("line_items must be a list")
+    commands = []
+    defaults = _order_line_defaults(order)
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise StageRejection("each line item must be an object")
+        sku = _named_sku(item)
+        if not sku:
+            continue
+        location, milligrams, kind, practitioner = _shopify_line(item, defaults)
+        if location is None and milligrams is None and kind is None:
+            continue
+        if not isinstance(location, str) or not location.strip() or milligrams is None:
+            raise StageRejection(f"sku {sku} requires location and milligrams")
+        args = {
+            "fulfillment_id": f"{order_id}:{index}:{sku}",
+            "sku_id": sku,
+            "location": location.strip(),
+            "milligrams": _milligrams(milligrams),
+            "kind": kind or "retail",
+            "practitioner_id": practitioner,
+        }
+        if args["kind"] == "treatment" and not practitioner:
+            raise StageRejection("practitioner_id is required")
+        commands.append({"command": "fulfill", "args": args})
+    return commands
+
+
+def _recorded_fulfillment(fulfillment_id: str) -> bool:
+    """True when this sale was already drawn. A refund that omits location still names it."""
+    if not fulfillment_id:
+        return False
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw or not Path(raw).is_file():
+        return False
+    for line in Path(raw).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "fulfill":
+            continue
+        if (record.get("args") or {}).get("fulfillment_id") == fulfillment_id:
+            return True
+    return False
+
+
+def _recorded_sale_returns(order_id: str) -> list[dict]:
+    """Sales already drawn for this order, when the cancel payload omits the lines."""
+    if not order_id:
+        return []
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw or not Path(raw).is_file():
+        return []
+    prefix = f"{order_id}:"
+    found: dict[str, None] = {}
+    for line in Path(raw).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "fulfill":
+            continue
+        fulfillment_id = (record.get("args") or {}).get("fulfillment_id")
+        if not isinstance(fulfillment_id, str) or not fulfillment_id.startswith(prefix):
+            continue
+        index, sep, _sku = fulfillment_id[len(prefix) :].partition(":")
+        if not index.isdigit() or not sep:
+            continue
+        found[fulfillment_id] = None
+    return _sale_returns(
+        [{"command": "fulfill", "args": {"fulfillment_id": fulfillment_id}} for fulfillment_id in found]
+    )
+
+
+def _merge_recorded_returns(commands: list[dict], order_id: str) -> list[dict]:
+    """A cancel that names some lines still returns the other sales of that order."""
+    named = {command["args"]["fulfillment_id"] for command in commands}
+    merged = list(commands)
+    for command in _recorded_sale_returns(order_id):
+        fulfillment_id = command["args"]["fulfillment_id"]
+        if fulfillment_id in named:
+            continue
+        merged.append(command)
+        named.add(fulfillment_id)
+    return merged
+
+
+def _recorded_sale_label(order: dict) -> str:
+    """The id a sale was recorded under.
+
+    A completed draft records order_id. A storefront order records order_number, then its name, then its id.
+    """
+    if _order_label(order, "order_number"):
+        return _order_label(order, "order_number", "name", "id")
+    if _order_label(order, "order_id"):
+        return _order_label(order, "order_id", "name", "id")
+    return _order_label(order, "name", "id")
+
+
+def shopify_return_commands(order: dict) -> list[dict]:
+    """A cancelled order returns every sale that order already drew.
+
+    A line the payload names is returned from that line.
+    A sale the payload omits is returned from the recorded fulfillment.
+    A completed draft records that sale under order_id, so a delete that names the draft id still returns it.
+    """
+    payload = order
+    label = ""
+    if isinstance(order, dict):
+        label = _recorded_sale_label(order)
+        if label and label != _order_label(order, "order_number", "name", "id"):
+            payload = {**order, "order_number": label}
+    commands = _sale_returns(shopify_fulfillment_commands(payload))
+    if not isinstance(order, dict):
+        return commands
+    return _merge_recorded_returns(commands, label)
+
+
+_SHOPIFY_RETURNED = frozenset({"refunded", "voided"})
+
+
+def _shopify_returned(order: dict) -> bool:
+    if order.get("cancelled_at") or order.get("cancel_reason"):
+        return True
+    status = str(order.get("financial_status") or "").strip().lower()
+    return status in _SHOPIFY_RETURNED
+
+
+def _line_id(value: object) -> str:
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
+def _unique_sku_index(items: list, sku: str) -> int | None:
+    """The line index when exactly one order line names this sku."""
+    if not sku:
+        return None
+    matched = [
+        index
+        for index, item in enumerate(items)
+        if isinstance(item, dict) and _named_sku(item) == sku
+    ]
+    if len(matched) == 1:
+        return matched[0]
+    return None
+
+
+def _sole_sku_index(items: list) -> int | None:
+    """The line index when exactly one order line names a sku."""
+    matched = [
+        index
+        for index, item in enumerate(items)
+        if isinstance(item, dict) and _named_sku(item)
+    ]
+    if len(matched) == 1:
+        return matched[0]
+    return None
+
+
+def shopify_refunded_line_commands(order: dict) -> list[dict]:
+    """A fully refunded line of a shipped order returns that sale.
+
+    A refund quantity below the line quantity stays off the ledger.
+    A refund line that omits the sku or the location uses the order line, then the sale already drawn.
+    A refund line that omits its id uses the sku when exactly one order line names it.
+    A refund line that omits its sku and its id uses the only order line that names a sku.
+    """
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    items = _sale_lines(order)
+    if not isinstance(items, list):
+        raise StageRejection("line_items must be a list")
+    indexes: dict[str, int] = {}
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        key = _line_id(item.get("id"))
+        if key:
+            indexes[key] = index
+    refunds = order.get("refunds") or []
+    if not isinstance(refunds, list):
+        raise StageRejection("refunds must be a list")
+    order_id = _text(_order_label(order, "order_number", "name", "id"), "order number")
+    returns = []
+    seen: set[str] = set()
+    for refund in refunds:
+        if not isinstance(refund, dict):
+            raise StageRejection("each refund must be an object")
+        lines = refund.get("refund_line_items") or []
+        if not isinstance(lines, list):
+            raise StageRejection("refund_line_items must be a list")
+        for refund_line in lines:
+            if not isinstance(refund_line, dict):
+                raise StageRejection("each refund line must be an object")
+            refund_item = refund_line.get("line_item")
+            refund_item = refund_item if isinstance(refund_item, dict) else None
+            line_key = _line_id(refund_item.get("id") if refund_item else None) or _line_id(
+                refund_line.get("line_item_id")
+            )
+            refund_sku = _named_sku(refund_item) if refund_item else ""
+            index = indexes.get(line_key) if line_key else None
+            if index is None:
+                index = _unique_sku_index(items, refund_sku)
+            if index is None and not line_key and not refund_sku:
+                index = _sole_sku_index(items)
+            order_line = items[index] if index is not None and isinstance(items[index], dict) else None
+            line = refund_item or order_line
+            if not isinstance(line, dict) or index is None:
+                continue
+            refunded = refund_line.get("quantity")
+            sold = line.get("quantity")
+            if sold is None or (isinstance(sold, str) and not sold.strip()):
+                if isinstance(order_line, dict) and order_line is not line:
+                    sold = order_line.get("quantity")
+            sold = sold or 1
+            try:
+                refunded_qty = _quantity(refunded)
+                sold_qty = _quantity(sold)
+            except StageRejection:
+                continue
+            if refunded_qty != sold_qty:
+                continue
+            sku = _named_sku(line) or (_named_sku(order_line) if isinstance(order_line, dict) else "")
+            if not sku:
+                continue
+            fulfillment_id = f"{order_id}:{index}:{sku}"
+            defaults = _order_line_defaults(order)
+            location, milligrams, _kind, _practitioner = _shopify_line(line, defaults)
+            if (
+                location is None
+                and milligrams is None
+                and isinstance(order_line, dict)
+                and order_line is not line
+            ):
+                location, milligrams, _kind, _practitioner = _shopify_line(order_line, defaults)
+            if location is None and milligrams is None:
+                if not _recorded_fulfillment(fulfillment_id):
+                    continue
+            elif not isinstance(location, str) or not location.strip() or milligrams is None:
+                raise StageRejection(f"sku {sku} requires location and milligrams")
+            if fulfillment_id in seen:
+                continue
+            seen.add(fulfillment_id)
+            returns.append(
+                {
+                    "command": "return_sale",
+                    "args": {
+                        "return_id": f"return:{fulfillment_id}",
+                        "fulfillment_id": fulfillment_id,
+                    },
+                }
+            )
+    return returns
+
+
+def _shopify_names_refund_lines(order: dict) -> bool:
+    """True when the order already names refund lines. A present financial status wins elsewhere."""
+    refunds = order.get("refunds")
+    if not isinstance(refunds, list):
+        return False
+    for refund in refunds:
+        if not isinstance(refund, dict):
+            continue
+        lines = refund.get("refund_line_items")
+        if isinstance(lines, list) and lines:
+            return True
+    return False
+
+
+def shopify_order_update_commands(order: dict) -> list[dict]:
+    """An order update records a sale only once Shopify says it shipped, paid, or came back.
+
+    An open update and a partial fulfillment stay off the ledger.
+    A refund quantity below the line quantity stays off the return.
+    A paid order that is not fulfilled does not settle, because the sale is not on the ledger yet.
+    A present financial status wins. Refund lines count when that status is omitted.
+    """
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    fulfillment_status = str(order.get("fulfillment_status") or "").strip().lower()
+    if _shopify_returned(order) or fulfillment_status == "restocked":
+        return shopify_return_commands(order)
+    if fulfillment_status != "fulfilled":
+        return []
+    commands = shopify_fulfillment_commands(order)
+    financial = str(order.get("financial_status") or "").strip().lower()
+    if financial == "paid":
+        commands.extend(shopify_settlement_commands(order))
+    elif financial == "partially_refunded" or (not financial and _shopify_names_refund_lines(order)):
+        commands.extend(shopify_refunded_line_commands(order))
+    return commands
+
+
+def _sale_returns(fulfillments: list[dict]) -> list[dict]:
+    returns = []
+    for command in fulfillments:
+        fulfillment_id = command["args"]["fulfillment_id"]
+        returns.append(
+            {
+                "command": "return_sale",
+                "args": {
+                    "return_id": f"return:{fulfillment_id}",
+                    "fulfillment_id": fulfillment_id,
+                },
+            }
+        )
+    return returns
+
+
+def shopify_settlement_commands(order: dict) -> list[dict]:
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    currency = _currency_text(order.get("currency")) or "USD"
+    explicit = _named(order, "fulfillment_id", "fulfillmentId")
+    if explicit:
+        order_number = _order_label(order, "order_number", "id") or explicit
+        return [
+            {
+                "command": "settle",
+                "args": {
+                    "settlement_id": _text(
+                        _named(order, "settlement_id", "settlementId") or f"pay-{order_number}",
+                        "settlement_id",
+                    ),
+                    "fulfillment_id": explicit,
+                    "amount_cents": _price_cents(_first_amount(order.get("total_price"), order.get("amount"))),
+                    "currency": currency,
+                },
+            }
+        ]
+    commands = []
+    order_id = _order_label(order, "order_number", "name", "id")
+    defaults = _order_line_defaults(order)
+    for index, item in enumerate(_sale_lines(order)):
+        if not isinstance(item, dict):
+            continue
+        sku = _named_sku(item)
+        if not sku:
+            continue
+        location, milligrams, _kind, _practitioner = _shopify_line(item, defaults)
+        if location is None and milligrams is None:
+            continue
+        quantity = _quantity_or_one(item.get("quantity"))
+        commands.append(
+            {
+                "command": "settle",
+                "args": {
+                    "settlement_id": f"pay-{order_id}:{index}:{sku}",
+                    "fulfillment_id": f"{order_id}:{index}:{sku}",
+                    "amount_cents": _price_cents(item.get("price")) * quantity,
+                    "currency": currency,
+                },
+            }
+        )
+    return commands
+
+
+def opencart_catalog_commands(product: dict) -> list[dict]:
+    if not isinstance(product, dict):
+        return []
+    mapped = {
+        "title": _named(product, "name", "title"),
+        "sku": _named_sku(product) or _named(product, "model"),
+        "tags": product.get("tags") if product.get("tags") is not None else product.get("tag"),
+        "formula_id": _named(product, "formula_id", "formulaId"),
+        "variants": product.get("variants"),
+    }
+    if "metafields" in product:
+        mapped["metafields"] = product.get("metafields")
+    return shopify_catalog_commands(mapped)
+
+
+_OPENCART_SHIPPED = frozenset({"shipped", "complete", "completed", "delivered", "fulfilled"})
+_OPENCART_PAID = frozenset({"paid", "complete", "completed", "processed"})
+_OPENCART_RETURNED = frozenset({"refunded", "cancelled", "canceled", "voided", "reversed"})
+
+
+def opencart_fulfillment_commands(order: dict) -> list[dict]:
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    if _opencart_returned(order):
+        return []
+    status = _opencart_status(order)
+    if order.get("fulfilled") is not True and status not in _OPENCART_SHIPPED:
+        return []
+    items = []
+    for item in _opencart_lines(order):
+        if not isinstance(item, dict):
+            raise StageRejection("each product must be an object")
+        items.append(_opencart_identity(item))
+    return shopify_fulfillment_commands(
+        {
+            "order_number": _order_label(order, "order_id", "order_number", "id"),
+            "line_items": items,
+        }
+    )
+
+
+def opencart_settlement_commands(order: dict) -> list[dict]:
+    """A paid OpenCart order settles the fulfillment its lines already name."""
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    if _opencart_returned(order):
+        return []
+    status = _opencart_status(order)
+    if order.get("paid") is not True and status not in _OPENCART_PAID:
+        return []
+    items = []
+    for item in _opencart_lines(order):
+        if not isinstance(item, dict):
+            raise StageRejection("each product must be an object")
+        price = item.get("price")
+        quantity = item.get("quantity")
+        if _missing_amount(price) and not _missing_amount(item.get("total")):
+            price = item.get("total")
+            quantity = 1
+        if _missing_amount(price):
+            continue
+        line = _opencart_identity(item)
+        line["price"] = price
+        line["quantity"] = _quantity_or_one(quantity)
+        items.append(line)
+    return shopify_settlement_commands(
+        {
+            "order_number": _order_label(order, "order_id", "order_number", "id"),
+            "currency": (
+                _currency_text(order.get("currency_code"))
+                or _currency_text(order.get("currency"))
+                or "USD"
+            ),
+            "total_price": order.get("total"),
+            "fulfillment_id": _named(order, "fulfillment_id", "fulfillmentId"),
+            "settlement_id": _named(order, "settlement_id", "settlementId"),
+            "line_items": items,
+        }
+    )
+
+
+def opencart_return_commands(order: dict) -> list[dict]:
+    """A refunded or cancelled order returns every sale that order already drew.
+
+    A line the payload names is returned from that line.
+    A sale the payload omits is returned from the recorded fulfillment.
+    """
+    if not isinstance(order, dict):
+        raise StageRejection("order is required")
+    if not _opencart_returned(order):
+        return []
+    label = _order_label(order, "order_id", "order_number", "id")
+    lines = _opencart_lines(order)
+    if not label and (not isinstance(lines, list) or not lines):
+        return []
+    named = {
+        key: value
+        for key, value in order.items()
+        if key not in {"status", "new_status", "order_status", "returned", "fulfilled", "paid"}
+    }
+    named["status"] = "shipped"
+    commands = _sale_returns(opencart_fulfillment_commands(named))
+    return _merge_recorded_returns(commands, label)
+
+
+# OpenCart connector payment map, labeled with the status names that map already uses.
+_OPENCART_STATUS_IDS = {
+    1: "pending",
+    2: "pending",
+    3: "shipped",
+    5: "complete",
+    7: "canceled",
+    11: "refunded",
+}
+
+
+def _opencart_status(order: dict) -> str:
+    named = str(order.get("status") or order.get("new_status") or order.get("order_status") or "").strip().lower()
+    if named:
+        return named
+    for key in ("new_status_id", "order_status_id"):
+        if order.get(key) is None:
+            continue
+        label = _OPENCART_STATUS_IDS.get(_opencart_status_code(order.get(key)))
+        if label:
+            return label
+    return ""
+
+
+def _opencart_status_code(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _opencart_returned(order: dict) -> bool:
+    return order.get("returned") is True or _opencart_status(order) in _OPENCART_RETURNED
+
+
+def _opencart_identity(item: dict) -> dict:
+    """A line field names the sale. Product options do when the line does not."""
+    properties = item.get("properties")
+    if properties is None:
+        options = item.get("option")
+        if not isinstance(options, list):
+            options = item.get("options")
+        properties = options if isinstance(options, list) else None
+    return {
+        "sku": _named_sku(item) or _named(item, "model"),
+        "location": item.get("location"),
+        "milligrams": item.get("milligrams"),
+        "properties": properties,
+        "kind": item.get("kind"),
+        "practitioner_id": _named(item, "practitionerId", "practitioner_id") or None,
+    }
+
+
+def wix_delivery_commands(booking: dict) -> list[dict]:
+    if not isinstance(booking, dict):
+        raise StageRejection("booking is required")
+    booking = booking.get("booking") if isinstance(booking.get("booking"), dict) else booking
+    booking_id = _text(str(booking.get("id") or ""), "booking id")
+    services = booking.get("services") or []
+    if isinstance(services, dict):
+        services = [services]
+    if not isinstance(services, list):
+        raise StageRejection("services must be a list")
+    commands = []
+    for index, service in enumerate(services):
+        if not isinstance(service, dict):
+            raise StageRejection("each service must be an object")
+        delivery = service.get("delivery")
+        if not isinstance(delivery, dict):
+            continue
+        source = _text(delivery.get("source"), "source")
+        destination = _text(delivery.get("destination"), "destination")
+        if source == destination:
+            raise StageRejection("transfer source and destination must differ")
+        commands.append(
+            {
+                "command": "transfer",
+                "args": {
+                    "transfer_id": f"{booking_id}:{index}",
+                    "sku_id": _text(_named(delivery, "sku_id", "skuId", "sku"), "sku_id"),
+                    "batch_id": _text(_named(delivery, "batch_id", "batchId"), "batch_id"),
+                    "source": source,
+                    "destination": destination,
+                    "milligrams": _milligrams(delivery.get("milligrams")),
+                },
+            }
+        )
+    return commands
+
+
+def record_opencart_catalog(product: dict) -> dict | None:
+    try:
+        commands = opencart_catalog_commands(product)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_idempotent(commands)
+
+
+def record_opencart_fulfillments(order: dict) -> dict | None:
+    try:
+        commands = (
+            opencart_fulfillment_commands(order)
+            + opencart_settlement_commands(order)
+            + opencart_return_commands(order)
+        )
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_idempotent(commands)
+
+
+def _recorded_wix_deliveries(booking: dict) -> list[dict]:
+    """Deliveries already moved for this booking, when the cancel payload omits them."""
+    nested = booking.get("booking") if isinstance(booking.get("booking"), dict) else booking
+    booking_id = _text(str(nested.get("id") or ""), "booking id")
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw or not Path(raw).is_file():
+        return []
+    prefix = f"{booking_id}:"
+    found: dict[str, dict] = {}
+    for line in Path(raw).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "transfer":
+            continue
+        args = record.get("args") or {}
+        transfer_id = args.get("transfer_id")
+        if not isinstance(transfer_id, str) or not transfer_id.startswith(prefix):
+            continue
+        if not transfer_id[len(prefix) :].isdigit():
+            continue
+        found[transfer_id] = {"command": "transfer", "args": args}
+    return list(found.values())
+
+
+def _reverse_transfer(args: dict) -> dict:
+    return {
+        "command": "transfer",
+        "args": {
+            "transfer_id": f"return:{args['transfer_id']}",
+            "sku_id": args["sku_id"],
+            "batch_id": args["batch_id"],
+            "source": args["destination"],
+            "destination": args["source"],
+            "milligrams": args["milligrams"],
+        },
+    }
+
+
+def _same_transfer(prior: dict, args: dict) -> bool:
+    return all(prior.get(key) == args.get(key) for key in ("sku_id", "batch_id", "source", "destination", "milligrams"))
+
+
+def wix_return_commands(booking: dict) -> list[dict]:
+    """A cancelled booking sends every recorded delivery back to its source.
+
+    A delivery the payload names is returned only when it matches the recorded movement.
+    A different quantity is rejected and leaves the other deliveries unmoved.
+    A delivery the payload omits is returned from the recorded transfer.
+    """
+    forwards = wix_delivery_commands(booking)
+    recorded = {command["args"]["transfer_id"]: command["args"] for command in _recorded_wix_deliveries(booking)}
+    if not forwards:
+        forwards = [{"command": "transfer", "args": args} for args in recorded.values()]
+    commands = []
+    named_ids: set[str] = set()
+    for command in forwards:
+        args = command["args"]
+        named_ids.add(args["transfer_id"])
+        reverse = _reverse_transfer(args)["args"]
+        prior = recorded.get(args["transfer_id"])
+        if prior is not None and not _same_transfer(_reverse_transfer(prior)["args"], reverse):
+            raise StageRejection("id already exists")
+        commands.append({"command": "transfer", "args": reverse})
+    for transfer_id, args in recorded.items():
+        if transfer_id in named_ids:
+            continue
+        commands.append(_reverse_transfer(args))
+    return commands
+
+
+_WIX_CANCELLED = frozenset({"canceled", "cancelled"})
+
+
+def _wix_cancelled(booking: dict) -> bool:
+    """Wix spells the status CANCELED. A declined booking is not a cancellation."""
+    if not isinstance(booking, dict):
+        return False
+    nested = booking.get("booking") if isinstance(booking.get("booking"), dict) else booking
+    status = str(nested.get("status") or "").strip().lower()
+    return status in _WIX_CANCELLED
+
+
+def record_wix_deliveries(booking: dict) -> dict | None:
+    if _wix_cancelled(booking):
+        return record_wix_cancellation(booking)
+    try:
+        commands = wix_delivery_commands(booking)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_idempotent(commands)
+
+
+def record_wix_cancellation(booking: dict) -> dict | None:
+    try:
+        commands = wix_return_commands(booking)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_idempotent(commands)
+
+
+def record_shopify_catalog(product: dict) -> dict | None:
+    try:
+        commands = shopify_catalog_commands(product)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_idempotent(commands)
+
+
+def record_shopify_fulfillments(order: dict) -> dict | None:
+    try:
+        commands = shopify_fulfillment_commands(order)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_fulfillments(commands)
+
+
+def record_shopify_returns(order: dict) -> dict | None:
+    try:
+        commands = shopify_return_commands(order)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_idempotent(commands)
+
+
+def record_draft_order(draft: dict) -> dict | None:
+    try:
+        commands = draft_order_commands(draft)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_fulfillments(commands)
+
+
+def record_shopify_settlement(order: dict) -> dict | None:
+    try:
+        commands = shopify_settlement_commands(order)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_many(commands)
+
+
+def record_shopify_order_update(order: dict) -> dict | None:
+    try:
+        commands = shopify_order_update_commands(order)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}
+    return _commit_idempotent(commands)
+
+
+def record_shopify_paid_order(order: dict) -> dict | None:
+    """A paid order settles a sale that has shipped, and draws that sale first.
+
+    A paid order that has not shipped stays off the ledger. An explicit
+    fulfillment id still settles that sale.
+    """
+    if not isinstance(order, dict):
+        return {"ok": False, "error": "order is required"}
+    if _named(order, "fulfillment_id", "fulfillmentId"):
+        return record_shopify_settlement(order)
+    if str(order.get("fulfillment_status") or "").strip().lower() != "fulfilled":
+        return None
+    paid = dict(order)
+    if str(paid.get("financial_status") or "").strip().lower() != "paid":
+        paid["financial_status"] = "paid"
+    return record_shopify_order_update(paid)
+
+
+def record_shopify_fulfilled_order(order: dict) -> dict | None:
+    """A fulfilled order draws the named sale. A paid order also settles it."""
+    if not isinstance(order, dict):
+        return {"ok": False, "error": "order is required"}
+    fulfilled = dict(order)
+    if not _shopify_returned(fulfilled):
+        status = str(fulfilled.get("fulfillment_status") or "").strip().lower()
+        if status != "fulfilled":
+            fulfilled["fulfillment_status"] = "fulfilled"
+    return record_shopify_order_update(fulfilled)
+
+
+def record_synced_sale(platform: str, payload: dict) -> dict | None:
+    """A platform sync records the same sale the webhook would record.
+
+    An order that does not name a shipped sale, delivery, or return stays off the ledger.
+    """
+    if not isinstance(payload, dict):
+        return None
+    name = str(platform or "").strip().lower()
+    if name == "shopify":
+        return record_shopify_order_update(payload)
+    if name == "opencart":
+        return record_opencart_fulfillments(payload)
+    if name == "wix":
+        return record_wix_deliveries(payload)
+    return None
+
+
+def record_synced_catalog(platform: str, payload: dict) -> dict | None:
+    """A platform product sync records the same catalog the webhook would record.
+
+    A product that does not name a formula stays off the ledger.
+    """
+    if not isinstance(payload, dict):
+        return None
+    name = str(platform or "").strip().lower()
+    if name == "shopify":
+        return record_shopify_catalog(payload)
+    if name == "opencart":
+        return record_opencart_catalog(payload)
+    return None
+
+
+_LINE_ATTRIBUTES = {
+    "location": "location",
+    "milligrams": "milligrams",
+    "kind": "kind",
+    "practitioner_id": "practitioner_id",
+    "practitionerid": "practitioner_id",
+}
+
+
+def _attribute_values(entries: object) -> dict:
+    """Line properties and note attributes name a sale.
+
+    REST payloads use name. GraphQL custom attributes use key.
+    A present name wins, so a gift name does not fall through to a location key.
+    practitionerId is the same practitioner as practitioner_id.
+    """
+    found: dict[str, object] = {}
+    if not isinstance(entries, list):
+        return found
+    for prop in entries:
+        if not isinstance(prop, dict):
+            continue
+        name = str(prop.get("name") or prop.get("key") or "").strip().lower()
+        canonical = _LINE_ATTRIBUTES.get(name)
+        if canonical is None or canonical in found:
+            continue
+        found[canonical] = prop.get("value")
+    return found
+
+
+def _order_line_defaults(order: dict) -> dict:
+    """Order note attributes name the same line fields a property can name."""
+    return _attribute_values(order.get("note_attributes"))
+
+
+def _text_or_same(value: object) -> object:
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return value
+
+
+def _missing_amount(value: object) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _shopify_line(item: dict, defaults: dict | None = None) -> tuple[object, object, str | None, str | None]:
+    defaults = defaults or {}
+    location = _text_or_same(item.get("location"))
+    milligrams = None if _missing_amount(item.get("milligrams")) else item.get("milligrams")
+    kind = item.get("kind")
+    kind = kind.strip() if isinstance(kind, str) else None
+    if not kind:
+        kind = None
+    practitioner = _named(item, "practitionerId", "practitioner_id")
+    for name, value in _attribute_values(item.get("properties")).items():
+        if name == "location" and location is None:
+            location = _text_or_same(value)
+        elif name == "milligrams" and milligrams is None and not _missing_amount(value):
+            milligrams = value
+        elif name == "kind" and kind is None and isinstance(value, str):
+            kind = value.strip() or None
+        elif name == "practitioner_id" and not practitioner:
+            practitioner = value.strip() if isinstance(value, str) else value
+    if location is None:
+        location = _text_or_same(defaults.get("location"))
+    if milligrams is None and not _missing_amount(defaults.get("milligrams")):
+        milligrams = defaults.get("milligrams")
+    if kind is None and isinstance(defaults.get("kind"), str):
+        kind = defaults["kind"].strip()
+    if not practitioner and defaults.get("practitioner_id"):
+        practitioner = defaults["practitioner_id"]
+    if not isinstance(practitioner, str):
+        return location, milligrams, kind, None
+    return location, milligrams, kind, practitioner.strip() or None
+
+
+def _milligrams(value: object) -> int:
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise StageRejection("milligrams must be a positive integer")
+    return value
+
+
+def _price_cents(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise StageRejection("amount_cents is required")
+    try:
+        cents = int(round(float(value) * 100))
+    except (TypeError, ValueError) as exc:
+        raise StageRejection("amount_cents is required") from exc
+    if cents < 1:
+        raise StageRejection("amount_cents must be a positive integer")
+    return cents
+
+
+def _commit_fulfillments(commands: list[dict]) -> dict | None:
+    """Append new fulfillments. The same sale arriving again is not a second draw."""
+    return _commit_idempotent(commands)
+
+
+def _commit_idempotent(commands: list[dict]) -> dict | None:
+    """Append commands that are not already on the ledger with the same args."""
+    if not commands:
+        return None
+    fresh = _unrecorded(commands)
+    if fresh is None:
+        return {"ok": False, "error": "id already exists"}
+    if not fresh:
+        return {"ok": True, "count": 0}
+    return _commit_many(fresh)
+
+
+def _command_identity(command: dict) -> tuple[str, str] | None:
+    args = command.get("args") or {}
+    name = command.get("command")
+    if name == "fulfill":
+        return ("fulfill", str(args.get("fulfillment_id")))
+    if name == "settle":
+        return ("settle", str(args.get("settlement_id")))
+    if name == "return_sale":
+        return ("return_sale", str(args.get("return_id")))
+    if name == "catalog_sku":
+        return ("catalog_sku", str(args.get("sku_id")))
+    if name == "transfer":
+        return ("transfer", str(args.get("transfer_id")))
+    return None
+
+
+def _unrecorded(commands: list[dict]) -> list[dict] | None:
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw:
+        return commands
+    path = Path(raw)
+    if not path.is_file():
+        return commands
+    found: dict[tuple[str, str], dict] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        identity = _command_identity(record)
+        if identity is None:
+            continue
+        found[identity] = record.get("args") or {}
+    fresh: list[dict] = []
+    for command in commands:
+        identity = _command_identity(command)
+        if identity is None:
+            fresh.append(command)
+            continue
+        prior = found.get(identity)
+        if prior is None:
+            fresh.append(command)
+            continue
+        if prior != command["args"]:
+            return None
+    return fresh
+
+
+def _first_amount(*values: object) -> object:
+    """A present amount wins. A blank one falls through to the next amount."""
+    for value in values:
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            continue
+        if value:
+            return value
+    return None
+
+
+def _quantity_or_one(value: object) -> int:
+    """A missing or blank quantity is one. A present count is kept."""
+    if isinstance(value, str):
+        if not value.strip():
+            value = 1
+    elif not value:
+        value = 1
+    return _quantity(value)
+
+
+def _quantity(value: object) -> int:
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise StageRejection("quantity must be a positive integer")
+    return value
+
+
+def _commit_many(commands: list[dict]) -> dict | None:
+    if not commands:
+        return None
+    if not os.environ.get("SKINTWIN_CHAIN_LEDGER"):
+        use_shared_ledger()
+    locator = _locator()
+    if locator is None:
+        return {"ok": False, "error": "supply-chain hub is not present"}
+    error = locator.commit_commands(commands)
+    if error:
+        return {"ok": False, "error": error}
+    return {"ok": True, "count": len(commands)}
 
 
 def use_shared_ledger() -> None:

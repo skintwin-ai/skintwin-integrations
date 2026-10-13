@@ -177,14 +177,20 @@ class ShopifyWebhookHandler:
     # ==================== Order Handlers ====================
     
     def on_order_created(self, data: Dict) -> Dict:
-        """Handle order created event."""
+        """Handle order created event.
+
+        An open order stays off the ledger. A created order that is already fulfilled,
+        paid, or returned uses the same recorder as orders/updated.
+        """
         order_id = data.get('id')
         order_number = data.get('order_number')
         logger.info(f"Shopify order created: #{order_number} (ID: {order_id})")
+        recorded = self._supply_chain("record_shopify_order_update", data, "orders/create")
         return {
             'action': 'create',
             'order_id': order_id,
-            'order_number': order_number
+            'order_number': order_number,
+            'recorded': recorded,
         }
     
     def on_order_updated(self, data: Dict) -> Dict:
@@ -192,10 +198,12 @@ class ShopifyWebhookHandler:
         order_id = data.get('id')
         order_number = data.get('order_number')
         logger.info(f"Shopify order updated: #{order_number} (ID: {order_id})")
+        recorded = self._supply_chain("record_shopify_order_update", data, "orders/updated")
         return {
             'action': 'update',
             'order_id': order_id,
-            'order_number': order_number
+            'order_number': order_number,
+            'recorded': recorded,
         }
     
     def on_order_cancelled(self, data: Dict) -> Dict:
@@ -203,10 +211,12 @@ class ShopifyWebhookHandler:
         order_id = data.get('id')
         order_number = data.get('order_number')
         logger.info(f"Shopify order cancelled: #{order_number} (ID: {order_id})")
+        recorded = self._supply_chain("record_shopify_returns", data, "orders/cancelled")
         return {
             'action': 'cancel',
             'order_id': order_id,
-            'order_number': order_number
+            'order_number': order_number,
+            'recorded': recorded,
         }
     
     def on_order_fulfilled(self, data: Dict) -> Dict:
@@ -214,10 +224,12 @@ class ShopifyWebhookHandler:
         order_id = data.get('id')
         order_number = data.get('order_number')
         logger.info(f"Shopify order fulfilled: #{order_number} (ID: {order_id})")
+        recorded = self._supply_chain("record_shopify_fulfilled_order", data, "orders/fulfilled")
         return {
             'action': 'fulfill',
             'order_id': order_id,
-            'order_number': order_number
+            'order_number': order_number,
+            'recorded': recorded,
         }
     
     def on_order_paid(self, data: Dict) -> Dict:
@@ -225,10 +237,12 @@ class ShopifyWebhookHandler:
         order_id = data.get('id')
         order_number = data.get('order_number')
         logger.info(f"Shopify order paid: #{order_number} (ID: {order_id})")
+        recorded = self._supply_chain("record_shopify_paid_order", data, "orders/paid")
         return {
             'action': 'paid',
             'order_id': order_id,
-            'order_number': order_number
+            'order_number': order_number,
+            'recorded': recorded,
         }
     
     # ==================== Product Handlers ====================
@@ -238,10 +252,12 @@ class ShopifyWebhookHandler:
         product_id = data.get('id')
         title = data.get('title')
         logger.info(f"Shopify product created: {title} (ID: {product_id})")
+        recorded = self._supply_chain("record_shopify_catalog", data, "products/create")
         return {
             'action': 'create',
             'product_id': product_id,
-            'title': title
+            'title': title,
+            'recorded': recorded,
         }
     
     def on_product_updated(self, data: Dict) -> Dict:
@@ -249,11 +265,27 @@ class ShopifyWebhookHandler:
         product_id = data.get('id')
         title = data.get('title')
         logger.info(f"Shopify product updated: {title} (ID: {product_id})")
+        recorded = self._supply_chain("record_shopify_catalog", data, "products/update")
         return {
             'action': 'update',
             'product_id': product_id,
-            'title': title
+            'title': title,
+            'recorded': recorded,
         }
+
+    def _supply_chain(self, recorder: str, data: Dict, topic: str):
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        import chain_stage
+
+        recorded = getattr(chain_stage, recorder)(data)
+        if isinstance(recorded, dict) and recorded.get("ok") is False:
+            raise WebhookError(recorded.get("error") or "supply chain rejected the webhook", event_type=topic)
+        return recorded
     
     def on_product_deleted(self, data: Dict) -> Dict:
         """Handle product deleted event."""
@@ -304,10 +336,12 @@ class ShopifyWebhookHandler:
         draft_order_id = data.get('id')
         name = data.get('name')
         logger.info(f"Shopify draft order created: {name} (ID: {draft_order_id})")
+        recorded = self._supply_chain("record_draft_order", data, "draft_orders/create")
         return {
             'action': 'create',
             'draft_order_id': draft_order_id,
-            'name': name
+            'name': name,
+            'recorded': recorded,
         }
     
     def on_draft_order_updated(self, data: Dict) -> Dict:
@@ -315,19 +349,23 @@ class ShopifyWebhookHandler:
         draft_order_id = data.get('id')
         name = data.get('name')
         logger.info(f"Shopify draft order updated: {name} (ID: {draft_order_id})")
+        recorded = self._supply_chain("record_draft_order", data, "draft_orders/update")
         return {
             'action': 'update',
             'draft_order_id': draft_order_id,
-            'name': name
+            'name': name,
+            'recorded': recorded,
         }
     
     def on_draft_order_deleted(self, data: Dict) -> Dict:
         """Handle draft order deleted event."""
         draft_order_id = data.get('id')
         logger.info(f"Shopify draft order deleted: ID {draft_order_id}")
+        recorded = self._supply_chain("record_shopify_returns", data, "draft_orders/delete")
         return {
             'action': 'delete',
-            'draft_order_id': draft_order_id
+            'draft_order_id': draft_order_id,
+            'recorded': recorded,
         }
     
     # ==================== Inventory Handlers ====================

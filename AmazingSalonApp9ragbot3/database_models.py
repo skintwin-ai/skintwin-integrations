@@ -102,6 +102,7 @@ class Transaction(db_sql.Model):
     # Payment fields
     payment_provider = db_sql.Column(db_sql.String(50), default='stripe')  # stripe, paystack
     payment_intent_id = db_sql.Column(db_sql.String(255), nullable=True)  # Stripe payment_intent_id or Paystack reference
+    fulfillment_id = db_sql.Column(db_sql.String(255), nullable=True)
     payment_method_id = db_sql.Column(db_sql.String(255), nullable=True)  # Stripe payment_method_id or Paystack authorization code
     payment_status = db_sql.Column(db_sql.String(50), default='pending')  # pending, completed, failed, refunded
     

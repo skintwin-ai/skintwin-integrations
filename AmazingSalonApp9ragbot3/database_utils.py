@@ -206,7 +206,7 @@ def delete_appointment_sql(appointment_id):
     return True
 
 # Transaction functions
-def create_transaction_sql(client_id, amount, description, payment_method_id=None, payment_intent_id=None, points_used=0, payment_provider='stripe'):
+def create_transaction_sql(client_id, amount, description, payment_method_id=None, payment_intent_id=None, points_used=0, payment_provider='stripe', fulfillment_id=None):
     """Create a new transaction in the SQL database with payment provider details"""
     # Calculate points earned based on ConfigManager.get_points_per_dollar or default to 1 point per dollar
     points_per_dollar = 1 # Default fallback
@@ -227,7 +227,8 @@ def create_transaction_sql(client_id, amount, description, payment_method_id=Non
         payment_method_id=payment_method_id,
         payment_intent_id=payment_intent_id,
         payment_provider=payment_provider,
-        payment_status='completed' if payment_intent_id else 'pending'
+        payment_status='completed' if payment_intent_id else 'pending',
+        fulfillment_id=fulfillment_id,
     )
     db_sql.session.add(transaction)
     
