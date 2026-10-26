@@ -98,6 +98,24 @@ def _record_opencart_request(order, order_id=None):
     return _record_named_opencart_sale(order, order_id)
 
 
+def _with_request_currency(saved, requested):
+    """A currency the request names fills one the saved record left blank."""
+    if not isinstance(saved, dict):
+        return saved
+    stage = _chain_stage()
+    if stage._currency_text(saved.get("currency_code")) or stage._currency_text(saved.get("currency")):
+        return saved
+    if not isinstance(requested, dict):
+        return saved
+    code = stage._currency_text(requested.get("currency_code"))
+    currency = stage._currency_text(requested.get("currency"))
+    if code:
+        return {**saved, "currency_code": code}
+    if currency:
+        return {**saved, "currency": currency}
+    return saved
+
+
 def _saved_opencart_payment(saved, requested):
     """A saved shipment that omits its payment settles when the request already says paid.
 
@@ -114,10 +132,10 @@ def _saved_opencart_payment(saved, requested):
     if not shipped:
         return saved
     if saved.get("paid") is False or saved.get("paid") is True or status in stage._OPENCART_PAID:
-        return saved
+        return _with_request_currency(saved, requested)
     if not _opencart_request_paid(requested):
         return saved
-    return {**saved, "paid": True}
+    return _with_request_currency({**saved, "paid": True}, requested)
 
 
 def _copy_opencart_status_id(payload):

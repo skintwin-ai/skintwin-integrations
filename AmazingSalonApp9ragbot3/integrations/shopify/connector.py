@@ -350,6 +350,21 @@ def _saved_shopify_order(saved, order_id):
     return {**saved, "id": order_id}
 
 
+def _with_request_currency(saved, requested):
+    """A currency the request names fills one the saved record left blank."""
+    if not isinstance(saved, dict):
+        return saved
+    stage = _chain_stage()
+    if stage._currency_text(saved.get("currency")):
+        return saved
+    currency = ""
+    if isinstance(requested, dict):
+        currency = stage._currency_text(requested.get("currency"))
+    if not currency:
+        return saved
+    return {**saved, "currency": currency}
+
+
 def _saved_shopify_payment(saved, requested):
     """A saved fulfilled order that omits its payment status settles when the request already says paid.
 
@@ -362,10 +377,11 @@ def _saved_shopify_payment(saved, requested):
     if _chain_stage()._shopify_returned(saved):
         return saved
     if str(saved.get("financial_status") or "").strip():
-        return saved
+        return _with_request_currency(saved, requested)
     if str(requested.get("financial_status") or "").strip().lower() != "paid":
         return saved
-    return {**saved, "financial_status": "paid"}
+    paid = {**saved, "financial_status": "paid"}
+    return _with_request_currency(paid, requested)
 
 
 def _order_names_a_sale(order):
@@ -741,6 +757,9 @@ def _draft_names_a_priced_sale(draft) -> bool:
         "line_items": draft.get("line_items") or [],
         "note_attributes": draft.get("note_attributes") or [],
     }
+    currency = stage._currency_text(draft.get("currency"))
+    if currency:
+        order["currency"] = currency
     try:
         fulfillments = stage.shopify_fulfillment_commands(order)
     except stage.StageRejection:
@@ -845,7 +864,7 @@ def _saved_shopify_draft_payment(saved, requested):
         return saved
     if not _draft_request_paid(requested):
         return saved
-    stamped = {**saved, "financial_status": "paid"}
+    stamped = _with_request_currency({**saved, "financial_status": "paid"}, requested)
     stage = _chain_stage()
     try:
         commands = stage.draft_order_commands(stamped)

@@ -136,7 +136,9 @@ def paystack_settlement(transaction: dict) -> dict | None:
     cents = int(amount) if isinstance(amount, int) else int(round(float(amount)))
     if cents < 1:
         return None
-    currency = _currency_text(data.get("currency")) or _currency_text(metadata.get("currency")) or "NGN"
+    currency = _currency_text(data.get("currency")) or _currency_text(metadata.get("currency"))
+    if not currency:
+        raise StageRejection("currency is required")
     return {
         "fulfillment_id": fulfillment_id.strip(),
         "settlement_id": settlement_id.strip(),
@@ -146,7 +148,10 @@ def paystack_settlement(transaction: dict) -> dict | None:
 
 
 def record_paystack_settlement(transaction: dict) -> tuple[dict, int] | None:
-    payment = paystack_settlement(transaction)
+    try:
+        payment = paystack_settlement(transaction)
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}, 400
     if payment is None:
         return None
     return settlement_for_payment(payment)
@@ -171,7 +176,7 @@ def settlement_for_payment(data: dict) -> tuple[dict, int] | None:
                 "settlement_id": settlement_id,
                 "fulfillment_id": fulfillment_id,
                 "amount_cents": cents,
-                "currency": _currency_text(data.get("currency")) or "USD",
+                "currency": _currency_text(data.get("currency")),
             },
         }
     )
@@ -791,9 +796,11 @@ def _sale_returns(fulfillments: list[dict]) -> list[dict]:
 def shopify_settlement_commands(order: dict) -> list[dict]:
     if not isinstance(order, dict):
         raise StageRejection("order is required")
-    currency = _currency_text(order.get("currency")) or "USD"
+    currency = _currency_text(order.get("currency"))
     explicit = _named(order, "fulfillment_id", "fulfillmentId")
     if explicit:
+        if not currency:
+            raise StageRejection("currency is required")
         order_number = _order_label(order, "order_number", "id") or explicit
         return [
             {
@@ -822,6 +829,8 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
         if location is None and milligrams is None:
             continue
         quantity = _quantity_or_one(item.get("quantity"))
+        if not currency:
+            raise StageRejection("currency is required")
         commands.append(
             {
                 "command": "settle",
@@ -907,7 +916,6 @@ def opencart_settlement_commands(order: dict) -> list[dict]:
             "currency": (
                 _currency_text(order.get("currency_code"))
                 or _currency_text(order.get("currency"))
-                or "USD"
             ),
             "total_price": order.get("total"),
             "fulfillment_id": _named(order, "fulfillment_id", "fulfillmentId"),

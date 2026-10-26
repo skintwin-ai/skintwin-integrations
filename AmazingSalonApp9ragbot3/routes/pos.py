@@ -45,7 +45,7 @@ def _settle_chain_payment(payment, amount):
         "settlementId": payment.get("settlementId") if hasattr(payment, "get") else None,
         "amount_cents": payment.get("amount_cents") if hasattr(payment, "get") else None,
         "amount": amount,
-        "currency": (payment.get("currency") if hasattr(payment, "get") else None) or "USD",
+        "currency": payment.get("currency") if hasattr(payment, "get") else None,
     }
     return settlement_for_payment(payload)
 
