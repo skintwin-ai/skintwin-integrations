@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from chain_stage import (
+    StageRejection,
     _locate_script,
     draft_order_commands,
     opencart_catalog_commands,
@@ -1590,12 +1591,15 @@ class SettlementRouteTests(unittest.TestCase):
             "line_items": [{**line, "price": "20.00"}],
         }
         self.assertEqual(len(draft_order_commands(priced)), 1)
-        paid = {**priced, "financial_status": "paid"}
+        paid = {**priced, "financial_status": "paid", "currency": "ZAR"}
         paid_commands = draft_order_commands(paid)
         self.assertEqual(paid_commands[1]["command"], "settle")
         self.assertEqual(paid_commands[1]["args"]["settlement_id"], "pay-9:0:sku-serum-c")
         self.assertEqual(paid_commands[1]["args"]["amount_cents"], 2000)
-        self.assertEqual(paid_commands[1]["args"]["currency"], "USD")
+        self.assertEqual(paid_commands[1]["args"]["currency"], "ZAR")
+        with self.assertRaises(StageRejection) as missing_currency:
+            draft_order_commands({**priced, "financial_status": "paid"})
+        self.assertEqual(str(missing_currency.exception), "currency is required")
         self.assertEqual(len(draft_order_commands({**priced, "financial_status": "pending"})), 1)
         self.assertEqual(len(draft_order_commands({**priced, "paid": False})), 1)
         self.assertEqual(
@@ -1606,6 +1610,7 @@ class SettlementRouteTests(unittest.TestCase):
             len(
                 draft_order_commands(
                     {
+                        "currency": "ZAR",
                         "status": "completed",
                         "id": 3,
                         "order_id": 9,
@@ -1901,7 +1906,7 @@ class SettlementRouteTests(unittest.TestCase):
         drawn = shopify_order_update_commands(fulfilled)
         self.assertEqual(drawn[0]["args"]["location"], "cape-town")
         self.assertEqual(drawn[0]["args"]["milligrams"], 2000)
-        paid = shopify_order_update_commands({**fulfilled, "financial_status": "paid"})
+        paid = shopify_order_update_commands({"currency": "ZAR", **fulfilled, "financial_status": "paid"})
         self.assertEqual([command["command"] for command in paid], ["fulfill", "settle"])
         owned = {
             **fulfilled,
@@ -2017,12 +2022,12 @@ class SettlementRouteTests(unittest.TestCase):
                     env=os.environ.copy(),
                 )
                 self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
-                recorded = record_shopify_order_update({**fulfilled, "financial_status": "paid"})
+                recorded = record_shopify_order_update({"currency": "ZAR", **fulfilled, "financial_status": "paid"})
                 self.assertTrue(recorded["ok"])
                 self.assertEqual(recorded["count"], 2)
                 text = ledger.read_text(encoding="utf-8")
                 self.assertIn("9:0:sku-serum-c", text)
-                again = record_shopify_order_update({**fulfilled, "financial_status": "paid"})
+                again = record_shopify_order_update({"currency": "ZAR", **fulfilled, "financial_status": "paid"})
                 self.assertTrue(again["ok"])
                 self.assertEqual(again["count"], 0)
                 self.assertEqual(ledger.read_text(encoding="utf-8"), text)
@@ -2049,7 +2054,7 @@ class SettlementRouteTests(unittest.TestCase):
         open_order = {"order_number": 9, "currency": "ZAR", "line_items": [line]}
         self.assertEqual(shopify_order_update_commands(open_order), [])
         self.assertEqual(
-            shopify_order_update_commands({**open_order, "financial_status": "paid"}),
+            shopify_order_update_commands({"currency": "ZAR", **open_order, "financial_status": "paid"}),
             [],
         )
         self.assertEqual(
@@ -2059,7 +2064,7 @@ class SettlementRouteTests(unittest.TestCase):
         fulfilled = {**open_order, "fulfillment_status": "fulfilled"}
         drawn = shopify_order_update_commands(fulfilled)
         self.assertEqual([command["command"] for command in drawn], ["fulfill"])
-        paid = {**fulfilled, "financial_status": "paid"}
+        paid = {"currency": "ZAR", **fulfilled, "financial_status": "paid"}
         both = shopify_order_update_commands(paid)
         self.assertEqual([command["command"] for command in both], ["fulfill", "settle"])
         self.assertEqual(both[1]["args"]["settlement_id"], "pay-9:0:sku-serum-c")
@@ -3476,7 +3481,7 @@ class SettlementRouteTests(unittest.TestCase):
         }
         self.assertEqual(opencart_fulfillment_commands(sized), [])
         self.assertEqual(opencart_fulfillment_commands({**shipped, "status": "pending"}), [])
-        complete = {**shipped, "status": "complete"}
+        complete = {"currency": "ZAR", **shipped, "status": "complete"}
         self.assertEqual(
             [command["command"] for command in opencart_fulfillment_commands(complete) + opencart_settlement_commands(complete)],
             ["fulfill", "settle"],
@@ -4219,6 +4224,7 @@ class SettlementRouteTests(unittest.TestCase):
             owned = shopify_settlement_commands(
                 {
                     "order_number": 9,
+                    "currency": "ZAR",
                     "total_price": "185.00",
                     "fulfillment_id": "9:0:sku-serum-c",
                     "fulfillmentId": "other",
@@ -4445,6 +4451,7 @@ class SettlementRouteTests(unittest.TestCase):
             with self.assertRaises(shopify.WebhookError):
                 shopify.ShopifyWebhookHandler("secret").on_order_created(
                     {
+                        "currency": "ZAR",
                         "id": 11,
                         "order_number": 11,
                         "fulfillment_status": "fulfilled",
@@ -4884,6 +4891,7 @@ class SettlementRouteTests(unittest.TestCase):
             {
                 "data": {
                     "amount": 18500,
+                    "currency": "ZAR",
                     "reference": "  ",
                     "id": "  ",
                     "metadata": {"fulfillment_id": "order-retail"},
@@ -5042,17 +5050,18 @@ class SettlementRouteTests(unittest.TestCase):
         )
         self.assertEqual(fallen["currency"], "zar")
         self.assertEqual(fallen["fulfillment_id"], "order-retail")
-        defaulted = paystack_settlement(
-            {
-                "data": {
-                    "amount": 18500,
-                    "currency": "  ",
-                    "reference": "salon-1",
-                    "metadata": {"fulfillment_id": "order-retail", "currency": "  "},
+        with self.assertRaises(StageRejection) as missing_currency:
+            paystack_settlement(
+                {
+                    "data": {
+                        "amount": 18500,
+                        "currency": "  ",
+                        "reference": "salon-1",
+                        "metadata": {"fulfillment_id": "order-retail", "currency": "  "},
+                    }
                 }
-            }
-        )
-        self.assertEqual(defaulted["currency"], "NGN")
+            )
+        self.assertEqual(str(missing_currency.exception), "currency is required")
         self.assertIsNone(
             paystack_settlement({"data": {"amount": 18500, "currency": "  ", "reference": "salon-1"}})
         )
@@ -5065,16 +5074,16 @@ class SettlementRouteTests(unittest.TestCase):
             }
         )
         self.assertEqual(paid[0]["args"]["currency"], "ZAR")
-        blank_shop = shopify_settlement_commands(
-            {
-                "order_number": 9,
-                "currency": "  ",
-                "fulfillment_id": "sale-1",
-                "total_price": "10.00",
-            }
-        )
-        self.assertEqual(blank_shop[0]["args"]["currency"], "USD")
-        self.assertEqual(blank_shop[0]["args"]["fulfillment_id"], "sale-1")
+        with self.assertRaises(StageRejection) as blank_shop:
+            shopify_settlement_commands(
+                {
+                    "order_number": 9,
+                    "currency": "  ",
+                    "fulfillment_id": "sale-1",
+                    "total_price": "10.00",
+                }
+            )
+        self.assertEqual(str(blank_shop.exception), "currency is required")
         self.assertEqual(
             shopify_settlement_commands(
                 {
@@ -5108,17 +5117,18 @@ class SettlementRouteTests(unittest.TestCase):
         )
         self.assertEqual(coded[0]["args"]["currency"], "zar")
         self.assertEqual(coded[0]["args"]["fulfillment_id"], "sale-1")
-        opencart_default = opencart_settlement_commands(
-            {
-                "order_id": 4,
-                "status": "paid",
-                "currency_code": "  ",
-                "currency": "  ",
-                "fulfillment_id": "sale-1",
-                "total": "10.00",
-            }
-        )
-        self.assertEqual(opencart_default[0]["args"]["currency"], "USD")
+        with self.assertRaises(StageRejection) as opencart_default:
+            opencart_settlement_commands(
+                {
+                    "order_id": 4,
+                    "status": "paid",
+                    "currency_code": "  ",
+                    "currency": "  ",
+                    "fulfillment_id": "sale-1",
+                    "total": "10.00",
+                }
+            )
+        self.assertEqual(str(opencart_default.exception), "currency is required")
         self.assertEqual(
             opencart_settlement_commands(
                 {"order_id": 4, "status": "pending", "currency_code": "  ", "currency": "ZAR"}
@@ -5135,8 +5145,8 @@ class SettlementRouteTests(unittest.TestCase):
                     "currency": "  ",
                 }
             )
-            self.assertEqual(blank_status, 200)
-            self.assertEqual(blank_payment["artifact"]["currency"], "USD")
+            self.assertEqual(blank_status, 400)
+            self.assertEqual(blank_payment["error"], "currency is required")
             kept, kept_status = settlement_for_payment(
                 {
                     "fulfillment_id": "order-retail",
@@ -8470,6 +8480,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"fulfillment_id": "25:0:sku-serum-c"', updated_text)
                 connector.echoes[26] = {
                     "order_number": 26,
+                    "currency": "ZAR",
                     "fulfillment_status": "fulfilled",
                     "financial_status": "paid",
                 }
@@ -8483,6 +8494,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"amount_cents": 2000', paid_text)
                 connector.echoes[27] = {
                     "order_number": 27,
+                    "currency": "ZAR",
                     "fulfillment_status": "fulfilled",
                     "financial_status": "paid",
                 }
@@ -8540,6 +8552,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"fulfillment_id": "41:0:sku-serum-c"', kept_number_text)
                 self.assertNotIn('"fulfillment_id": "40:0:sku-serum-c"', kept_number_text)
                 connector.echoes[36] = {
+                    "currency": "ZAR",
                     "fulfillment_status": "fulfilled",
                     "financial_status": "paid",
                 }
@@ -8553,6 +8566,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"settlement_id": "pay-36:0:sku-serum-c"', paid_omitted_text)
                 self.assertIn('"amount_cents": 2000', paid_omitted_text)
                 connector.echoes[39] = {
+                    "currency": "ZAR",
                     "fulfillment_status": "fulfilled",
                     "financial_status": "paid",
                 }
@@ -8605,6 +8619,7 @@ class SettlementRouteTests(unittest.TestCase):
                     21,
                     {
                         "order_number": 21,
+                        "currency": "ZAR",
                         "financial_status": "paid",
                         "line_items": [{**line, "price": "20.00"}],
                     },
@@ -8619,6 +8634,7 @@ class SettlementRouteTests(unittest.TestCase):
                 paid_request = connector.create_order(
                     {
                         "order_number": 60,
+                        "currency": "ZAR",
                         "financial_status": "paid",
                         "line_items": [{**line, "price": "20.00"}],
                     }
@@ -8633,6 +8649,7 @@ class SettlementRouteTests(unittest.TestCase):
                 again_paid = connector.create_order(
                     {
                         "order_number": 60,
+                        "currency": "ZAR",
                         "financial_status": "paid",
                         "line_items": [{**line, "price": "20.00"}],
                     }
@@ -8644,6 +8661,7 @@ class SettlementRouteTests(unittest.TestCase):
                 with self.assertRaises(IntegrationError) as unpriced_paid:
                     connector.create_order(
                         {
+                            "currency": "ZAR",
                             "order_number": 61,
                             "financial_status": "paid",
                             "line_items": [line],
@@ -9008,6 +9026,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"return_id": "return:15:0:sku-serum-c"', updated_text)
                 connector.echoes[16] = {
                     "order_number": 16,
+                    "currency": "ZAR",
                     "fulfillment_status": "fulfilled",
                     "financial_status": "paid",
                     "line_items": [{**line, "price": "20.00"}],
@@ -9110,6 +9129,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertNotIn('"return_id": "return:23:0:sku-serum-c"', kept_short_text)
                 connector.echoes[26] = {
                     "order_number": 26,
+                    "currency": "ZAR",
                     "fulfillment_status": "fulfilled",
                     "financial_status": "paid",
                     "line_items": [{**line, "price": "20.00"}],
@@ -9360,6 +9380,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertEqual(seeded.returncode, 0, seeded.stderr or seeded.stdout)
                 connector.echoes[("order", 41)] = {
                     "order_number": 41,
+                    "currency": "ZAR",
                     "fulfillment_status": "fulfilled",
                     "financial_status": "paid",
                     "line_items": [kept, dropped],
@@ -9369,8 +9390,8 @@ class SettlementRouteTests(unittest.TestCase):
                 )
                 self.assertNotIn("price", created["line_items"][1])
                 text = ledger.read_text(encoding="utf-8")
-                self.assertEqual(settlement_cents(text, "pay-41:0:sku-serum-c"), (15000, "USD"))
-                self.assertEqual(settlement_cents(text, "pay-41:1:sku-serum-c"), (18500, "USD"))
+                self.assertEqual(settlement_cents(text, "pay-41:0:sku-serum-c"), (15000, "ZAR"))
+                self.assertEqual(settlement_cents(text, "pay-41:1:sku-serum-c"), (18500, "ZAR"))
                 again = connector.create_order(
                     {"order_number": 41, "line_items": [requested_line, requested_line]}
                 )
@@ -9389,6 +9410,7 @@ class SettlementRouteTests(unittest.TestCase):
                     )
                 self.assertEqual(ledger.read_text(encoding="utf-8"), before_word)
                 connector.echoes[("order", 43)] = {
+                    "currency": "ZAR",
                     "order_number": 43,
                     "fulfillment_status": "fulfilled",
                     "financial_status": "paid",
@@ -9871,6 +9893,7 @@ class SettlementRouteTests(unittest.TestCase):
                     "status": "completed",
                     "id": 3,
                     "order_id": 10,
+                    "currency": "ZAR",
                     "line_items": [priced],
                 }
                 paid = connector.complete_draft_order(3, payment_pending=False)
@@ -9880,7 +9903,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"fulfillment_id": "10:0:sku-serum-c"', settled)
                 self.assertIn('"settlement_id": "pay-10:0:sku-serum-c"', settled)
                 self.assertIn('"amount_cents": 2000', settled)
-                self.assertIn('"currency": "USD"', settled)
+                self.assertIn('"currency": "ZAR"', settled)
                 paid_again = connector.complete_draft_order(3, payment_pending=False)
                 self.assertIsNone(paid_again.get("financial_status"))
                 self.assertEqual(len(connector.completed), 7)
@@ -9911,6 +9934,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"fulfillment_id": "12:0:sku-serum-c"', pending_text)
                 self.assertNotIn('"settlement_id": "pay-12:', pending_text)
                 connector.response = {
+                    "currency": "ZAR",
                     "status": "completed",
                     "id": 3,
                     "order_id": 13,
@@ -10363,6 +10387,7 @@ class SettlementRouteTests(unittest.TestCase):
                         "status": "open",
                         "id": 15,
                         "order_id": 15,
+                        "currency": "ZAR",
                         "financial_status": "paid",
                         "line_items": [priced],
                     }
@@ -10374,9 +10399,10 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"fulfillment_id": "15:0:sku-serum-c"', paid_text)
                 self.assertIn('"settlement_id": "pay-15:0:sku-serum-c"', paid_text)
                 self.assertIn('"amount_cents": 2000', paid_text)
-                self.assertIn('"currency": "USD"', paid_text)
+                self.assertIn('"currency": "ZAR"', paid_text)
                 paid_again = connector.create_draft_order(
                     {
+                        "currency": "ZAR",
                         "status": "open",
                         "id": 15,
                         "order_id": 15,
@@ -10388,6 +10414,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertEqual(ledger.read_text(encoding="utf-8"), paid_text)
                 pending_echo = connector.create_draft_order(
                     {
+                        "currency": "ZAR",
                         "status": "open",
                         "id": 16,
                         "financial_status": "paid",
@@ -10412,6 +10439,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertNotIn('"settlement_id": "pay-17:', request_pending_text)
                 unpaid_echo = connector.create_draft_order(
                     {
+                        "currency": "ZAR",
                         "status": "open",
                         "id": 18,
                         "financial_status": "paid",
@@ -10437,6 +10465,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertNotIn('"settlement_id": "pay-19:', unpaid_request_text)
                 missing_price = connector.create_draft_order(
                     {
+                        "currency": "ZAR",
                         "status": "open",
                         "id": 20,
                         "financial_status": "paid",
@@ -10449,6 +10478,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertNotIn('"settlement_id": "pay-20:', missing_price_text)
                 kept_amount = connector.create_draft_order(
                     {
+                        "currency": "ZAR",
                         "status": "completed",
                         "id": 21,
                         "order_id": 21,
@@ -10465,6 +10495,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertNotIn('"amount_cents": 3000', kept_amount_text)
                 echo_price = connector.create_draft_order(
                     {
+                        "currency": "ZAR",
                         "status": "completed",
                         "id": 22,
                         "order_id": 22,
@@ -10480,6 +10511,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"amount_cents": 2000', echo_price_text)
                 still_open = connector.create_draft_order(
                     {
+                        "currency": "ZAR",
                         "status": "open",
                         "id": 23,
                         "order_id": 23,
@@ -11767,7 +11799,7 @@ class SettlementRouteTests(unittest.TestCase):
                 kept_id_text = ledger.read_text(encoding="utf-8")
                 self.assertIn('"fulfillment_id": "40:0:sku-serum-c"', kept_id_text)
                 self.assertNotIn('"fulfillment_id": "39:0:sku-serum-c"', kept_id_text)
-                connector.responses.append({"status": "complete"})
+                connector.responses.append({"status": "complete", "currency_code": "ZAR"})
                 paid_blank = connector.create_appointment(
                     {"order_id": 41, "status": "pending", "products": [line]}
                 )
@@ -11777,7 +11809,7 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"fulfillment_id": "41:0:sku-serum-c"', paid_blank_text)
                 self.assertIn('"settlement_id": "pay-41:0:sku-serum-c"', paid_blank_text)
                 self.assertIn('"amount_cents": 18500', paid_blank_text)
-                self.assertIn('"currency": "USD"', paid_blank_text)
+                self.assertIn('"currency": "ZAR"', paid_blank_text)
                 connector.history.append({"order_status_id": 3})
                 updated = connector.update_appointment(
                     "25",
@@ -11838,7 +11870,8 @@ class SettlementRouteTests(unittest.TestCase):
                 connector.responses.append({"order_id": 50})
                 before_open_paid = list(connector.calls)
                 opened_paid = connector.create_appointment(
-                    {"order_id": 50, "status": "paid", "products": [line]}
+                    {
+"currency": "ZAR","order_id": 50, "status": "paid", "products": [line]}
                 )
                 self.assertEqual(opened_paid.get("order_id"), 50)
                 self.assertEqual(connector.calls, before_open_paid + ["customer", "order"])
@@ -11847,7 +11880,8 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertNotIn('"settlement_id": "pay-50:0:sku-serum-c"', ledger.read_text(encoding="utf-8"))
                 connector.responses.append({"status": "shipped"})
                 paid_shipped = connector.create_appointment(
-                    {"order_id": 51, "status": "paid", "products": [line]}
+                    {
+"currency": "ZAR","order_id": 51, "status": "paid", "products": [line]}
                 )
                 self.assertEqual(paid_shipped.get("status"), "shipped")
                 self.assertNotIn("order_id", paid_shipped)
@@ -11859,13 +11893,15 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"amount_cents": 18500', paid_shipped_text)
                 connector.responses.append({"status": "shipped"})
                 again_paid = connector.create_appointment(
-                    {"order_id": 51, "status": "paid", "products": [line]}
+                    {
+"currency": "ZAR","order_id": 51, "status": "paid", "products": [line]}
                 )
                 self.assertEqual(again_paid.get("status"), "shipped")
                 self.assertEqual(ledger.read_text(encoding="utf-8"), paid_shipped_text)
                 connector.responses.append({"status": "shipped", "paid": False})
                 unpaid_echo = connector.create_appointment(
-                    {"order_id": 52, "status": "paid", "products": [line]}
+                    {
+"currency": "ZAR","order_id": 52, "status": "paid", "products": [line]}
                 )
                 self.assertEqual(unpaid_echo.get("status"), "shipped")
                 self.assertIs(unpaid_echo.get("paid"), False)
@@ -11875,7 +11911,8 @@ class SettlementRouteTests(unittest.TestCase):
                 connector.history.append({"status": "shipped"})
                 updated_paid = connector.update_appointment(
                     "21",
-                    {"status": "paid", "products": [line]},
+                    {
+"currency": "ZAR","status": "paid", "products": [line]},
                 )
                 self.assertEqual(updated_paid.get("status"), "shipped")
                 self.assertNotIn("paid", updated_paid)
@@ -11884,7 +11921,8 @@ class SettlementRouteTests(unittest.TestCase):
                 self.assertIn('"settlement_id": "pay-21:0:sku-serum-c"', updated_paid_text)
                 self.assertIn('"amount_cents": 18500', updated_paid_text)
                 connector.history.append({"status": "shipped"})
-                connector.update_appointment("21", {"status": "paid", "products": [line]})
+                connector.update_appointment("21", {
+"currency": "ZAR","status": "paid", "products": [line]})
                 self.assertEqual(ledger.read_text(encoding="utf-8"), updated_paid_text)
             finally:
                 if previous_ledger is None:
@@ -15891,7 +15929,8 @@ class SettlementRouteTests(unittest.TestCase):
                 )
                 pending_paid = connector.update_appointment(
                     "46",
-                    {"order_number": 46, "financial_status": "paid", "items": [line]},
+                    {
+"currency": "ZAR","order_number": 46, "financial_status": "paid", "items": [line]},
                 )
                 self.assertEqual(pending_paid.get("financial_status"), "pending")
                 self.assertEqual(ledger.read_text(encoding="utf-8"), omitted_appointment_text)
@@ -15899,7 +15938,7 @@ class SettlementRouteTests(unittest.TestCase):
                 connector.responses.append({"fulfillment_status": "fulfilled"})
                 paid_appointment = connector.update_appointment(
                     "46",
-                    {"order_number": 46, "financial_status": "paid", "items": [line]},
+                    {"order_number": 46, "currency": "ZAR", "financial_status": "paid", "items": [line]},
                 )
                 self.assertEqual(paid_appointment.get("fulfillment_status"), "fulfilled")
                 self.assertIsNone(paid_appointment.get("financial_status"))
@@ -15910,7 +15949,8 @@ class SettlementRouteTests(unittest.TestCase):
                 connector.responses.append({"fulfillment_status": "fulfilled"})
                 connector.update_appointment(
                     "46",
-                    {"order_number": 46, "financial_status": "paid", "items": [line]},
+                    {
+"currency": "ZAR","order_number": 46, "financial_status": "paid", "items": [line]},
                 )
                 self.assertEqual(ledger.read_text(encoding="utf-8"), paid_appointment_text)
                 appointment_refund = [

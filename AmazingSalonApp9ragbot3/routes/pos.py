@@ -45,7 +45,7 @@ def _settle_chain_payment(payment, amount):
         "settlementId": payment.get("settlementId") if hasattr(payment, "get") else None,
         "amount_cents": payment.get("amount_cents") if hasattr(payment, "get") else None,
         "amount": amount,
-        "currency": (payment.get("currency") if hasattr(payment, "get") else None) or "USD",
+        "currency": payment.get("currency") if hasattr(payment, "get") else None,
     }
     return settlement_for_payment(payload)
 
@@ -164,6 +164,12 @@ def initialize_paystack():
     
     if not client_id or not amount or not email:
         return jsonify({'error': 'Missing required parameters'}), 400
+    raw_currency = data.get('currency')
+    if not isinstance(raw_currency, str) or not raw_currency.strip():
+        return jsonify({'error': 'currency is required'}), 400
+    currency = raw_currency.strip()
+    if len(currency) != 3 or not currency.isalpha():
+        return jsonify({'error': 'currency must be a 3-letter code'}), 400
     
     # Get loyalty points conversion ratio from configuration
     points_to_dollar_ratio = ConfigManager.get_loyalty_points_ratio()
@@ -208,7 +214,7 @@ def initialize_paystack():
     payload = {
         'email': email,
         'amount': int(amount * 100),
-        'currency': 'USD',
+        'currency': currency.upper(),
         'reference': f'salon-{client_id}-{int(datetime.utcnow().timestamp())}',
         'callback_url': url_for('pos.verify_paystack', _external=True),
         'metadata': {
@@ -445,6 +451,18 @@ def create_transaction_route():
         payment_provider = request.form.get('payment_provider', 'stripe')
 
     payment = data if request.is_json else request.form
+    raw_currency = payment.get("currency") if hasattr(payment, "get") else None
+    if not isinstance(raw_currency, str) or not raw_currency.strip():
+        message = "currency is required"
+    elif len(raw_currency.strip()) != 3 or not raw_currency.strip().isalpha():
+        message = "currency must be a 3-letter code"
+    else:
+        message = ""
+    if message:
+        if request.is_json:
+            return jsonify({"error": message}), 400
+        flash(message, "error")
+        return redirect(url_for("pos.index"))
     settled = _settle_chain_payment(payment, amount)
     if settled is not None:
         body, status = settled
@@ -493,7 +511,7 @@ def create_transaction_route():
         # Create the payment intent
         payment_intent = stripe.PaymentIntent.create(
             amount=int(amount * 100),  # Stripe expects amounts in cents
-            currency='usd',
+            currency=raw_currency.strip().lower(),
             description=description,
             payment_method=payment_method_id,
             confirm=True,  # Confirm the payment immediately

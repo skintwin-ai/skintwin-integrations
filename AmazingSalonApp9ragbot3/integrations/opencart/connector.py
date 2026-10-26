@@ -89,13 +89,39 @@ def _record_opencart_request(order, order_id=None):
         return None
     try:
         settlements = stage.opencart_settlement_commands(payload)
-    except stage.StageRejection:
+    except stage.StageRejection as exc:
+        message = str(exc)
+        explicit = stage._named(payload, "fulfillment_id", "fulfillmentId")
+        if (
+            message in {"currency is required", "currency must be a 3-letter code"}
+            and explicit
+            and stage._recorded_fulfillment(explicit)
+        ):
+            _reject_ledger({"ok": False, "error": message}, "order")
         return None
     if not settlements:
         return None
     if any(not stage._recorded_fulfillment(command["args"]["fulfillment_id"]) for command in settlements):
         return None
     return _record_named_opencart_sale(order, order_id)
+
+
+def _with_request_currency(saved, requested):
+    """A currency the request names fills one the saved record left blank."""
+    if not isinstance(saved, dict):
+        return saved
+    stage = _chain_stage()
+    if stage._currency_text(saved.get("currency_code")) or stage._currency_text(saved.get("currency")):
+        return saved
+    if not isinstance(requested, dict):
+        return saved
+    code = stage._currency_text(requested.get("currency_code"))
+    currency = stage._currency_text(requested.get("currency"))
+    if code:
+        return {**saved, "currency_code": code}
+    if currency:
+        return {**saved, "currency": currency}
+    return saved
 
 
 def _saved_opencart_payment(saved, requested):
@@ -114,10 +140,10 @@ def _saved_opencart_payment(saved, requested):
     if not shipped:
         return saved
     if saved.get("paid") is False or saved.get("paid") is True or status in stage._OPENCART_PAID:
-        return saved
+        return _with_request_currency(saved, requested)
     if not _opencart_request_paid(requested):
         return saved
-    return {**saved, "paid": True}
+    return _with_request_currency({**saved, "paid": True}, requested)
 
 
 def _copy_opencart_status_id(payload):
