@@ -89,7 +89,15 @@ def _record_opencart_request(order, order_id=None):
         return None
     try:
         settlements = stage.opencart_settlement_commands(payload)
-    except stage.StageRejection:
+    except stage.StageRejection as exc:
+        message = str(exc)
+        explicit = stage._named(payload, "fulfillment_id", "fulfillmentId")
+        if (
+            message in {"currency is required", "currency must be a 3-letter code"}
+            and explicit
+            and stage._recorded_fulfillment(explicit)
+        ):
+            _reject_ledger({"ok": False, "error": message}, "order")
         return None
     if not settlements:
         return None

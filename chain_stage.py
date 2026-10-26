@@ -422,7 +422,9 @@ def _draft_settlements(order: dict, fulfillments: list[dict]) -> list[dict]:
         return []
     try:
         settlements = shopify_settlement_commands(order)
-    except StageRejection:
+    except StageRejection as exc:
+        if str(exc) in {"currency is required", "currency must be a 3-letter code"}:
+            raise
         return []
     if len(settlements) != len(fulfillments):
         return []
@@ -829,6 +831,7 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
         if location is None and milligrams is None:
             continue
         quantity = _quantity_or_one(item.get("quantity"))
+        amount_cents = _price_cents(item.get("price")) * quantity
         if not currency:
             raise StageRejection("currency is required")
         commands.append(
@@ -837,7 +840,7 @@ def shopify_settlement_commands(order: dict) -> list[dict]:
                 "args": {
                     "settlement_id": f"pay-{order_id}:{index}:{sku}",
                     "fulfillment_id": f"{order_id}:{index}:{sku}",
-                    "amount_cents": _price_cents(item.get("price")) * quantity,
+                    "amount_cents": amount_cents,
                     "currency": currency,
                 },
             }

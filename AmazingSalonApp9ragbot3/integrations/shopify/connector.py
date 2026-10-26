@@ -764,7 +764,10 @@ def _draft_names_a_priced_sale(draft) -> bool:
         fulfillments = stage.shopify_fulfillment_commands(order)
     except stage.StageRejection:
         return False
-    return bool(stage._draft_settlements(order, fulfillments))
+    try:
+        return bool(stage._draft_settlements(order, fulfillments))
+    except stage.StageRejection as exc:
+        return str(exc) in {"currency is required", "currency must be a 3-letter code"}
 
 
 def _completed_draft_payment(draft):
@@ -859,16 +862,18 @@ def _saved_shopify_draft_payment(saved, requested):
     if str(saved.get("status") or "").strip().lower() != "completed":
         return saved
     if str(saved.get("financial_status") or "").strip():
-        return saved
+        return _with_request_currency(saved, requested)
     if saved.get("paid") is True or saved.get("paid") is False:
-        return saved
+        return _with_request_currency(saved, requested)
     if not _draft_request_paid(requested):
         return saved
     stamped = _with_request_currency({**saved, "financial_status": "paid"}, requested)
     stage = _chain_stage()
     try:
         commands = stage.draft_order_commands(stamped)
-    except stage.StageRejection:
+    except stage.StageRejection as exc:
+        if str(exc) in {"currency is required", "currency must be a 3-letter code"}:
+            raise
         return saved
     if not any(command.get("command") == "settle" for command in commands):
         return saved

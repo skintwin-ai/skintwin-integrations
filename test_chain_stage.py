@@ -1597,7 +1597,9 @@ class SettlementRouteTests(unittest.TestCase):
         self.assertEqual(paid_commands[1]["args"]["settlement_id"], "pay-9:0:sku-serum-c")
         self.assertEqual(paid_commands[1]["args"]["amount_cents"], 2000)
         self.assertEqual(paid_commands[1]["args"]["currency"], "ZAR")
-        self.assertEqual(len(draft_order_commands({**priced, "financial_status": "paid"})), 1)
+        with self.assertRaises(StageRejection) as missing_currency:
+            draft_order_commands({**priced, "financial_status": "paid"})
+        self.assertEqual(str(missing_currency.exception), "currency is required")
         self.assertEqual(len(draft_order_commands({**priced, "financial_status": "pending"})), 1)
         self.assertEqual(len(draft_order_commands({**priced, "paid": False})), 1)
         self.assertEqual(
